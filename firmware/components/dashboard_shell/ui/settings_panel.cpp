@@ -163,7 +163,7 @@ void fill_agent_status() {
     if (agent_view.ready && agent_view.ok) {
         lv_label_set_text(how, "Agent no Mac respondendo.");
     } else {
-        lv_label_set_text(how, "No Mac: abra gilsondev.github.io/Tessara e instale o Agent.");
+        lv_label_set_text(how, "No Mac: abra gilsondev.github.io/Tessera e instale o Agent.");
     }
     lv_obj_set_width(how, lv_pct(100));
     lv_label_set_long_mode(how, LV_LABEL_LONG_WRAP);
@@ -179,12 +179,12 @@ void fill_agent_status() {
                           agent_pack_version);
         } else {
             std::snprintf(line, sizeof(line),
-                          "Fallback SD: agentd.tgz presente. Preferir gilsondev.github.io/Tessara.");
+                          "Fallback SD: agentd.tgz presente. Preferir gilsondev.github.io/Tessera.");
         }
         lv_label_set_text(note, line);
     } else {
         lv_label_set_text(note,
-                          "Terminal: curl -fsSL https://gilsondev.github.io/Tessara/install.command | bash");
+                          "Terminal: curl -fsSL https://gilsondev.github.io/Tessera/install.command | bash");
     }
     lv_obj_set_width(note, lv_pct(100));
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
@@ -861,7 +861,7 @@ void fill() {
         reload_cal_tile_size();
         face_choices("Altura do tile", kCalTileSize, kCalTileSizeText);
         lv_obj_t *note = lv_label_create(content);
-        lv_label_set_text(note, "S=1 evento · M=2 · L=3 · XL=4. Contas Google ficam no portal Agenda.");
+        lv_label_set_text(note, "S=1 evento · M=2 · L=3 · XL=4. Escolha calendários no Agente do Mac.");
         lv_obj_set_width(note, lv_pct(100));
         lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_font(note, &theme::small_font(), 0);

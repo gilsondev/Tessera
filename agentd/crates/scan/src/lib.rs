@@ -98,9 +98,7 @@ pub struct ScanConfigEnabled {
 impl ScanConfigEnabled {
     pub fn toggles_from_scan(found: &[ScanItem]) -> Self {
         let item = |id: &str| found.iter().find(|f| f.id == id);
-        let on = |id: &str| {
-            item(id).is_some_and(|f| f.state != ScanState::Missing)
-        };
+        let on = |id: &str| item(id).is_some_and(|f| f.state != ScanState::Missing);
         Self {
             media: on("media"),
             focus: on("focus"),
@@ -200,9 +198,7 @@ fn detect_focus(roots: &ScanRoots, enabled: bool) -> ScanItem {
     let mode_db = roots
         .home
         .join("Library/DoNotDisturb/DB/ModeConfigurations.json");
-    let assertions = roots
-        .home
-        .join("Library/DoNotDisturb/DB/Assertions.json");
+    let assertions = roots.home.join("Library/DoNotDisturb/DB/Assertions.json");
     let state = if !mode_db.is_file() && !assertions.is_file() {
         ScanState::Missing
     } else if file_readable(&mode_db) || file_readable(&assertions) {
@@ -225,26 +221,26 @@ fn detect_calendar(roots: &ScanRoots, enabled: bool) -> ScanItem {
     let paths = CalendarPaths {
         root: roots.home.join(".tessera/calendar"),
     };
-    let linked = fs::read_dir(paths.accounts_dir())
-        .ok()
-        .is_some_and(|entries| {
-            entries.flatten().any(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "json")
-            })
-        });
-    let has_client = paths.client_json().is_file();
-    let state = if linked {
-        ScanState::Ready
-    } else if has_client {
-        ScanState::NeedsAuth
+    // A scan never triggers a permission prompt. Only the explicit onboarding action does.
+    let state = if roots.home
+        == std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default()
+    {
+        tessera_caps_calendar::native::status(&paths)["permission"]
+            .as_str()
+            .unwrap_or("unavailable")
+            .to_string()
     } else {
-        ScanState::Missing
+        "not_determined".into()
     };
     ScanItem {
-        id: "calendar".to_string(),
-        state,
+        id: "calendar".into(),
+        state: if state == "authorized" {
+            ScanState::Ready
+        } else {
+            ScanState::NeedsAuth
+        },
         enabled,
     }
 }

@@ -365,9 +365,9 @@
     border-radius: 50%;
     background: #fff;
     box-shadow: 0 1px 2px rgba(0,0,0,.2);
-    transition: left .15s ease;
+    transition: transform .12s ease-out;
   }
-  .toggle.on::after { left: 21px; }
+  .toggle.on::after { transform: translateX(18px); }
 
   .cap {
     display: grid;
@@ -1112,3 +1112,40 @@
 
   .titlebar { display: none; }
   .body { flex: 1; overflow: auto; }
+
+/* Shared spacing and accessible interaction across setup and daily use. */
+.body { padding: 28px clamp(18px, 4vw, 36px) 40px; scrollbar-gutter: stable; }
+.screen.on { width: 100%; max-width: 880px; margin-inline: auto; gap: 22px; }
+.hero h2 { letter-spacing: -.035em; line-height: 1.15; max-width: 28ch; }
+.hero p { max-width: 65ch; line-height: 1.65; }
+.card { padding: 22px; border-radius: 16px; box-shadow: none; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+button:not(.toggle), summary, a.btn { min-height: 36px; }
+button:disabled { cursor: default; opacity: .55; }
+button[aria-busy="true"] { cursor: progress; }
+:focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
+.file-input { display: grid; gap: 10px; margin-top: 20px; }
+details { margin-top: 16px; color: var(--muted); line-height: 1.65; }
+summary { cursor: pointer; display: flex; align-items: center; font-weight: 600; }
+[data-live="calendar-status"] { padding-top: 12px; line-height: 1.6; }
+@media (max-width: 540px) { .grid.two { grid-template-columns: 1fr; } .row { flex-wrap: wrap; gap: 12px; } .card { padding: 18px; } .chrome { gap: 8px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+[data-live="calendar-choices"] .copy { display: grid; gap: 4px; padding-block: 10px; }
+[data-live="calendar-choices"] .copy span { color: var(--muted); font-size: 13px; }
+[data-live="calendar-choices"] input { min-width: 22px; accent-color: var(--teal); }
+.card > .actions { margin-top: 16px; }
+
+/* Visual size and hit area are separate: switches stay compact on the desktop. */
+.toggle { width: 44px; height: 26px; min-height: 26px; min-width: 44px; touch-action: manipulation; transition: background-color .1s ease-out; }
+.toggle::before { content: ""; position: absolute; inset: -9px -4px; }
+.toggle[aria-busy="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 20%, transparent); }
+input[type="checkbox"] { width: 18px; height: 18px; min-height: 18px; min-width: 18px; margin: 8px; accent-color: var(--teal); }
+input[type="range"] { min-height: 24px; }
+input.text-input { min-height: 40px; }
+.nav-tabs button { min-height: 44px; }
+.chips button { min-height: 34px; }
+.save-status { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: white; padding: 9px 16px; border-radius: 8px; max-width: min(90%, 480px); font-size: 13px; z-index: 10; pointer-events: none; }
+
+[data-live="calendar-choices"] input[type="checkbox"] { width: 18px; min-width: 18px; height: 18px; }
+/* Status badges are intrinsic labels, never stretched across a discovery row. */
+.found .copy .need { display: inline-flex; width: max-content; max-width: 100%; vertical-align: middle; }

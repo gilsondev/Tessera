@@ -107,6 +107,7 @@ add_executable(painel
   "${FW}/components/dashboard_shell/ui/tessera_mark_icon.cpp"
   "${FW}/components/dashboard_shell/ui/tile_icons.cpp"
   "${FW}/components/dashboard_shell/ui/home.cpp"
+  "${FW}/components/dashboard_shell/ui/screensaver.cpp"
   "${FW}/components/dashboard_shell/ui/settings_panel.cpp"
   "${FW}/components/dashboard_shell/ui/todoist_panel.cpp"
   "${FW}/components/dashboard_shell/ui/task_page.cpp"
@@ -130,6 +131,7 @@ add_executable(painel
   "${FW}/widgets/mac/mac/focus_snapshot.cpp"
   "${FW}/widgets/media/media/snapshot.cpp"
   "${FW}/widgets/media/ui/media_page.cpp"
+  "${FW}/widgets/media/ui/media_tile.cpp"
   "${FW}/widgets/mac/ui/mac_page.cpp"
   "${LVGL_DIR}/src/libs/qrcode/qrcodegen.c"
   ${LVGL_SOURCES}

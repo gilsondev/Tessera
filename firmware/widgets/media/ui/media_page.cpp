@@ -17,7 +17,10 @@ lv_obj_t *body = nullptr;
 lv_obj_t *meta = nullptr;
 lv_obj_t *track_label = nullptr;
 lv_obj_t *artist_label = nullptr;
+lv_obj_t *album_label = nullptr;
 lv_obj_t *cover_img = nullptr;
+lv_obj_t *cover_box = nullptr;
+lv_obj_t *cover_placeholder = nullptr;
 lv_event_cb_t back_cb = nullptr;
 media_page::CmdFn cmd_cb = nullptr;
 bool standalone_screen = false;
@@ -75,10 +78,21 @@ void build_into(lv_obj_t *parent) {
     lv_obj_set_height(meta, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(meta, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(meta, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(meta, 14, 0);
+    lv_obj_set_style_pad_row(meta, 8, 0);
 
     // Large cover — matches MEDIA_COVER edge (200).
-    cover_img = lv_image_create(meta);
+    cover_box = kit::bare(meta);
+    lv_obj_set_size(cover_box, media::kCoverEdge, media::kCoverEdge);
+    lv_obj_set_style_bg_color(cover_box, theme::surface(), 0);
+    lv_obj_set_style_bg_opa(cover_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(cover_box, 14, 0);
+    lv_obj_set_style_clip_corner(cover_box, true, 0);
+    cover_placeholder = lv_label_create(cover_box);
+    lv_label_set_text(cover_placeholder, LV_SYMBOL_AUDIO);
+    lv_obj_set_style_text_font(cover_placeholder, &lv_font_montserrat_40, 0);
+    lv_obj_set_style_text_color(cover_placeholder, theme::text_secondary(), 0);
+    lv_obj_center(cover_placeholder);
+    cover_img = lv_image_create(cover_box);
     lv_obj_set_size(cover_img, media::kCoverEdge, media::kCoverEdge);
     lv_obj_add_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_radius(cover_img, 12, 0);
@@ -99,6 +113,12 @@ void build_into(lv_obj_t *parent) {
     lv_obj_set_style_text_align(artist_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(artist_label, &font_pt15_bold, 0);
     lv_obj_set_style_text_color(artist_label, theme::text_secondary(), 0);
+    album_label = lv_label_create(meta);
+    lv_obj_set_width(album_label, lv_pct(100));
+    lv_obj_set_style_text_align(album_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(album_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(album_label, theme::text_secondary(), 0);
+    lv_label_set_text(album_label, "");
 }
 
 }  // namespace
@@ -116,8 +136,8 @@ void media_page::unmount() {
     title_label = nullptr;
     status_label = nullptr;
     body = meta = nullptr;
-    track_label = artist_label = nullptr;
-    cover_img = nullptr;
+    track_label = artist_label = album_label = nullptr;
+    cover_img = cover_box = cover_placeholder = nullptr;
     cover_shown_key[0] = '\0';
     cover_dsc = {};
     standalone_screen = false;
@@ -151,6 +171,8 @@ void media_page::apply_theme() {
     if (status_label) lv_obj_set_style_text_color(status_label, theme::text_secondary(), 0);
     if (track_label) lv_obj_set_style_text_color(track_label, theme::text_primary(), 0);
     if (artist_label) lv_obj_set_style_text_color(artist_label, theme::text_secondary(), 0);
+    if (album_label) lv_obj_set_style_text_color(album_label, theme::text_secondary(), 0);
+    if (cover_box) lv_obj_set_style_bg_color(cover_box, theme::surface(), 0);
     paint(cached, cached_agent_ok);
 }
 
@@ -159,17 +181,27 @@ void media_page::paint(const media::View &view, bool agent_ok) {
     cached = view;
     cached_agent_ok = agent_ok;
     if (!track_label) return;
+    char album[100];
+    if (view.media.album[0] && view.media.year[0] && strcmp(view.media.year, "0"))
+        snprintf(album, sizeof(album), "%s · %s", view.media.album, view.media.year);
+    else snprintf(album, sizeof(album), "%s", view.media.album);
+    set_if(album_label, view.media.ok ? album : "");
 
     auto hide_cover = [&]() {
         if (cover_img) lv_obj_add_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
+        if (cover_box) lv_obj_add_flag(cover_box, LV_OBJ_FLAG_HIDDEN);
         cover_shown_key[0] = '\0';
     };
     auto show_cover = [&]() {
+        if (cover_box) lv_obj_remove_flag(cover_box, LV_OBJ_FLAG_HIDDEN);
         if (!cover_img || !view.cover.ready || !view.cover.rgb565) {
-            hide_cover();
+            if (cover_img) lv_obj_add_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
+            if (cover_placeholder) lv_obj_remove_flag(cover_placeholder, LV_OBJ_FLAG_HIDDEN);
+            cover_shown_key[0] = 0;
             return;
         }
         if (strcmp(cover_shown_key, view.cover.key) != 0) {
+            lv_image_cache_drop(&cover_dsc);
             cover_dsc = {};
             cover_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
             cover_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
@@ -183,6 +215,7 @@ void media_page::paint(const media::View &view, bool agent_ok) {
             cover_shown_key[sizeof(cover_shown_key) - 1] = '\0';
         }
         lv_obj_remove_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
+        if (cover_placeholder) lv_obj_add_flag(cover_placeholder, LV_OBJ_FLAG_HIDDEN);
     };
 
     // Soft offline: keep last track if we already showed good data this session.

@@ -21,6 +21,9 @@ struct Media {
     char title[kTitleMax] = {};
     char artist[kArtistMax] = {};
     char app[kAppMax] = {};
+    char album[81] = {};
+    char year[8] = {};
+    char cover_key[kCoverKeyMax] = {};
 };
 
 struct Cover {

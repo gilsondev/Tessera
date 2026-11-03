@@ -1,66 +1,26 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tessera — painel + Agent no Mac</title>
-    <meta
-      name="description"
-      content="Tessera: painel de mesa e companion no Mac. Baixe o Agent e sincronize por USB."
-    />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/src/styles.css" />
-  </head>
-  <body>
-    <header class="top">
-      <a class="brand" href="./">
-        <img src="/mark.svg" width="36" height="36" alt="" />
-        <span>Tessera</span>
-      </a>
-      <a class="ghost" href="https://github.com/gilsondev/Tessara">GitHub</a>
-    </header>
-
-    <main>
-      <section class="hero">
-        <p class="eyebrow">Painel + Mac</p>
-        <h1>Tessera</h1>
-        <p class="lede">
-          Peças do mosaico da mesa: o painel JC3248 e o Agent no notebook, ligados por USB.
-        </p>
-        <div class="cta">
-          <a class="btn primary" id="download" href="https://github.com/gilsondev/Tessara/releases/latest"
-            >Baixar Agent para Mac</a
-          >
-          <p class="meta" id="version-note">Carregando versão…</p>
-        </div>
-        <p class="note">
-          Ou no Terminal:
-          <code id="install-cmd">curl -fsSL https://gilsondev.github.io/Tessara/install.command | bash</code>
-          <button type="button" class="ghost" id="copy-cmd">Copiar</button>
-        </p>
-        <p class="note">
-          Builds ainda <strong>não notarizados</strong> pela Apple — na 1ª abertura, use
-          Privacidade e Segurança se o Gatekeeper bloquear.
-        </p>
-      </section>
-
-      <section class="block">
-        <h2>Começar</h2>
-        <ol>
-          <li>Plugar o painel no Mac (USB).</li>
-          <li>Instalar o Agent por esta página (botão ou comando acima).</li>
-          <li>Autorizar o que a varredura pedir (FDA, Automação, etc.).</li>
-          <li>O painel passa a falar com o Mac sozinho — sem cartão SD.</li>
-        </ol>
-      </section>
-    </main>
-
-    <footer>
-      <span>Tessera</span>
-      <span id="footer-ver"></span>
-      <a href="https://github.com/gilsondev/Tessara">Código</a>
-    </footer>
-
-    <script type="module" src="/src/main.js"></script>
-  </body>
-</html>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tessera — um lugar para o que importa agora</title>
+  <meta name="description" content="Um painel aberto para sua mesa. Hora, clima, agenda e música, com um Agente no Mac. Conheça o Tessera e prepare seu dispositivo.">
+  <meta name="theme-color" content="#f4f1ea"><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+<a class="skip" href="#conteudo">Pular para o conteúdo</a>
+<header class="top"><a class="brand" href="#"><img src="/mark.svg" width="34" height="34" alt="">Tessera</a><nav aria-label="Principal"><a href="#conheca">Conheça</a><a href="#comecar">Comece aqui</a><a href="#colaborar">Colabore</a></nav><a class="github" href="https://github.com/gilsondev/Tessera">GitHub ↗</a></header>
+<main id="conteudo">
+  <section class="hero" id="conheca">
+    <div class="hero-copy"><p class="eyebrow">Seu dia, à vista</p><h1>Um lugar para o que importa agora.</h1><p class="lede">Hora, clima, próximos compromissos e a música da vez. O Tessera reúne pequenas informações em um painel para sua mesa.</p><div class="actions"><a class="btn primary" href="#comecar">Preparar meu Tessera <span aria-hidden="true">↓</span></a><a class="text-link" href="#funciona">Como funciona</a></div><p class="small">Código aberto · Painel ESP32 · Agente para Mac</p></div>
+    <div class="hero-visual"><div class="device"><img src="../docs/images/product-home.png" alt="Home do Tessera com relógio, clima, agenda e música de exemplo" width="320" height="480"></div><span class="caption">Menos troca de janelas.<br>Mais presença na mesa.</span></div>
+  </section>
+  <section class="intro" id="funciona"><p class="eyebrow">Peças que se conectam</p><h2>O painel na mesa.<br>O Agente no seu Mac.</h2><div class="feature-grid"><article><span class="number">01 / PAINEL</span><h3>Um olhar é suficiente</h3><p>Relógio e clima no próprio dispositivo. Widgets para acompanhar sua agenda, música, tarefas e cotas de IA.</p></article><article><span class="number">02 / AGENTE</span><h3>Seu Mac faz a ponte</h3><p>O Agente lê as integrações que você escolher e envia os dados pelo USB. Contas e credenciais ficam no Mac.</p></article><article><span class="number">03 / DO SEU JEITO</span><h3>Escolha o que aparece</h3><p>Ajuste brilho e descanso na tela. Use o Agente ou o portal no Wi‑Fi para configurar os widgets com mais espaço.</p></article></div></section>
+  <section class="gallery" aria-label="Telas do produto"><figure><img src="../docs/images/detail-clock.png" alt="Relógio do Tessera" width="320" height="480" loading="lazy"><figcaption>Hora, sem distração.</figcaption></figure><figure><img src="../docs/images/detail-weather.png" alt="Clima com previsão dos próximos dias" width="320" height="480" loading="lazy"><figcaption>O dia lá fora.</figcaption></figure><figure><img src="../docs/images/detail-settings.png" alt="Configurações do painel Tessera" width="320" height="480" loading="lazy"><figcaption>Uma mesa com a sua cara.</figcaption></figure></section>
+  <section class="agent-preview" aria-label="Agente no Mac"><div><p class="eyebrow">Integrações sem complicar</p><h2>Os calendários do seu Mac, no painel.</h2><p>Uma permissão do sistema e uma escolha sua. O Agente usa as contas que você já configurou no app Calendário.</p></div><img src="../docs/images/agent-calendars.png" alt="Agente Tessera com seleção de calendários de exemplo, agrupados por origem no Mac" width="980" height="720" loading="lazy"></section>
+  <section class="start" id="comecar"><div class="section-heading"><p class="eyebrow">Do primeiro acesso ao primeiro widget</p><h2>Vamos preparar sua mesa.</h2><p>Você precisa de um painel <strong>JC3248W535</strong>, cabo USB de dados e Wi‑Fi. O Agente é para Macs com Apple Silicon e macOS 13 ou mais recente.</p></div><ol class="setup-list"><li><span class="step">1</span><div><h3>Prepare o painel</h3><p>Já está com Tessera instalado? Ligue e siga as instruções de Wi‑Fi na tela. Para um painel novo, prepare o firmware pelo guia de instalação. Esta versão ainda exige as ferramentas de desenvolvimento para gravar o dispositivo.</p><a class="text-link" href="https://github.com/gilsondev/Tessera/blob/main/docs/guides/device-setup.md">Ver guia do dispositivo ↗</a></div></li><li><span class="step">2</span><div><h3>Instale o Agente no Mac</h3><p>O instalador prepara o serviço em segundo plano e o aplicativo Tessera. Baixar apenas o ZIP do aplicativo não instala o serviço.</p><div class="actions"><a class="btn primary" id="download" href="./install.command" download>Baixar instalador do Agente</a><span class="meta" id="version-note" role="status">Consultando versão…</span></div><details><summary>Como executar o instalador</summary><p>Abra o Terminal e execute o comando abaixo. Ele baixa o instalador do projeto, verifica o pacote e instala o Agente e o app.</p><div class="command"><code id="install-cmd">curl -fsSL https://gilsondev.github.io/Tessera/install.command | bash</code><button type="button" id="copy-cmd">Copiar comando</button></div><p>O app ainda não é notarizado. Se o macOS bloquear a abertura, use Ajustes do Sistema → Privacidade e Segurança → Abrir Mesmo Assim.</p></details></div></li><li><span class="step">3</span><div><h3>Escolha suas integrações</h3><p>Abra Tessera, escolha o que acompanhar e autorize o acesso necessário. Conecte o cabo USB: o app confirma quando encontrar o painel.</p><p>A Agenda usa os calendários que você já adicionou ao Mac. Basta permitir o acesso e escolher o que mostrar — sem importar contas ou senhas.</p><a class="text-link" href="https://github.com/gilsondev/Tessera/blob/main/docs/guides/calendar-setup.md">Escolher calendários do Mac ↗</a></div></li><li><span class="step">4</span><div><h3>Deixe com a sua cara</h3><p>Escolha os widgets nas abas Painel e Widgets do Agente, ou abra <a href="http://tessera.local">tessera.local</a> no mesmo Wi‑Fi. USB sincroniza o Mac; a rede local permite salvar os ajustes do dispositivo.</p></div></li></ol></section>
+  <section class="faq"><p class="eyebrow">Antes de começar</p><h2>Algumas respostas úteis.</h2><details><summary>Funciona sem o Mac?</summary><p>Relógio e clima funcionam no dispositivo. Agenda, música, foco, tarefas via Agente e cotas de IA precisam do Mac conectado por USB para atualizar.</p></details><details><summary>Posso controlar a música ou o foco pelo painel?</summary><p>Os widgets mostram o que acontece no Mac. Altere música e foco no próprio computador; o Tessera acompanha as mudanças. Álbum e ano aparecem quando fornecidos pelo player. O Spotify não informa o ano pela integração atual.</p></details><details><summary>Preciso comprar um dispositivo para colaborar?</summary><p>Não. O simulador executa as telas do firmware no computador, com dados de exemplo. Você pode contribuir com código, documentação e testes sem hardware.</p></details><details><summary>Onde ficam minhas credenciais?</summary><p>No Mac ou na configuração local do painel, conforme a integração. O site não recebe suas contas. Não publique capturas com eventos, tarefas ou credenciais pessoais.</p></details></section>
+  <section class="contribute" id="colaborar"><div><p class="eyebrow">Uma peça sua também cabe aqui</p><h2>Construa o Tessera com a gente.</h2><p>Widgets independentes, simulador e guias abertos. Comece pelas instruções de contribuição, rode o projeto localmente e escolha uma melhoria pequena.</p></div><div class="actions"><a class="btn dark" href="https://github.com/gilsondev/Tessera/blob/main/CONTRIBUTING.md">Quero contribuir ↗</a><a class="text-link" href="https://github.com/gilsondev/Tessera/issues">Ideias e problemas</a></div></section>
+</main>
+<footer><a class="brand" href="#">Tessera</a><span>Peças que formam a sua mesa.</span><span id="footer-ver"></span><a href="https://github.com/gilsondev/Tessera">Código aberto · Apache 2.0 ↗</a></footer>
+<script type="module" src="/src/main.js"></script>
+</body></html>

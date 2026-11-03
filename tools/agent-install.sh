@@ -28,6 +28,7 @@ if [ -z "$APP" ]; then
   exit 1
 fi
 
+export TESSERA_PAUSE_AUTO_UPDATE=1
 export TESSERA_APP="$APP"
 export AGENTD_BIN="$ROOT/agentd/target/release/Tessera"
 exec "$ROOT/tools/cutover_agent_v2.sh"

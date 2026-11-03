@@ -1,4 +1,5 @@
 #include "app/controller.h"
+#include "platform/ui_inspect.h"
 
 #include "agent/state.h"
 #include "aitokens/snapshot.h"
@@ -475,6 +476,8 @@ public:
         display_host::capture(Serial);
     }
 
+    void on_ui_tree() override { logger::lock(); ui_inspect::dump(Serial); logger::unlock(); }
+
     void on_perf() override {
         ui::Stats stats = ui::take_stats();
         logger::lock();
@@ -537,8 +540,11 @@ public:
     }
 
     void on_agent(const char *line) override {
-        const bool was_ok = agent_.ok;
+        const auto before = agent::for_display(agent_, millis());
+        const bool was_ok = before.ok;
         if (!agent::apply_line(agent_, line, millis())) return;
+        // Heartbeats refresh freshness in RAM, not every widget and portal.
+        if (before.ready && before.ok == agent_.ok && !strcmp(before.detail, agent_.detail)) return;
         if (agent_.ok) {
             // Bridge is up even before the first CALENDAR events line lands.
             if (!calendar_.bridge_ok) {
@@ -568,7 +574,7 @@ public:
     void on_media(const char *line) override {
         if (!line) return;
         if (strncmp(line, "MEDIA_COVER\t", 12) == 0) {
-            if (media::apply_cover_line(media_, line)) paint_media();
+            if (media::apply_cover_line(media_, line)) { paint_media(); Serial.printf("MEDIA_COVER_OK\t%s\n", media_.cover.key); }
             return;
         }
         if (!media::apply_line(media_, line, millis())) return;
@@ -836,6 +842,11 @@ public:
             rest_.wake_touch_pending = false;
             on_rest_wake();
             Serial.println("rest awake");
+            return;
+        }
+        if (!strcmp(arg, "stats")) {
+            const auto stats = screensaver::timing();
+            Serial.printf("CLOCK gap_max=%u changes=%u snaps=%u active=%u digits=%s\n", static_cast<unsigned>(stats.max_gap_ms), static_cast<unsigned>(stats.changes), static_cast<unsigned>(stats.snaps), static_cast<unsigned>(stats.active), stats.digits);
             return;
         }
         if (!strcmp(arg, "saver")) {

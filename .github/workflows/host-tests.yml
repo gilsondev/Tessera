@@ -1,0 +1,27 @@
+name: Firmware host journeys
+on:
+  push:
+    branches: [main]
+    paths: ['firmware/**', 'simulator/**', 'test/**', 'tools/embed_web.py', 'web/**', 'platformio.ini', '.github/workflows/host-tests.yml']
+  pull_request:
+    paths: ['firmware/**', 'simulator/**', 'test/**', 'tools/embed_web.py', 'web/**', 'platformio.ini', '.github/workflows/host-tests.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build pkg-config libsdl2-dev libfreetype-dev
+      - run: ./tools/bootstrap-env.sh
+      - run: make finish-host
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulator-journeys
+          path: /tmp/tessera-sim-out/
+          retention-days: 7

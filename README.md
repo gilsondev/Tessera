@@ -1,88 +1,52 @@
 # Tessera
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+A small, open source desk display for the **JC3248W535 ESP32-S3**, with a Mac companion. See your clock, weather, agenda, music and AI usage without switching windows.
 
-Modular wall / desk panel for ESP32 (**JC3248W535**): widget home, per-widget detail, phone portal, and a Mac USB agent.
+[Start using Tessera](https://gilsondev.github.io/Tessera/) · [Set up your device](docs/guides/device-setup.md) · [Contribute](CONTRIBUTING.md) · [Releases](https://github.com/gilsondev/Tessera/releases)
 
-**MVP acceptance:** clock + weather + shell / Widget SDK / simulator / portal.  
-Extras in-tree (Todoist, AI Tokens, screen rest, …) do not block MVP.
+![Tessera home with synthetic clock, weather, calendar and music data](docs/images/product-home.png)
 
-> Documentation language: **English** is the default. Portuguese mirrors live under [`docs/pt/`](docs/pt/).
+## Choose your starting point
 
-## Screenshots
+- **I have a panel:** follow [device setup](docs/guides/device-setup.md), install the Mac Agent, then choose your integrations.
+- **I want to try or contribute without hardware:** follow [developer setup](docs/getting-started.md). The simulator uses the firmware UI sources.
+- **I want to add a widget:** read the [architecture](docs/guides/architecture.md) and [widget guide](docs/guides/widget-authoring.md).
 
-Portrait **320×480** from the host simulator (`make e2e` / `make sim`) and one on-device snap.
+## What works
 
-| Home | Weather | Clock |
-| :---: | :---: | :---: |
-| ![Home](docs/images/normal.png) | ![Weather detail](docs/images/detail-weather.png) | ![Clock detail](docs/images/detail-clock.png) |
+Clock and weather run on the panel. The Mac Agent sends calendars already added to macOS, Spotify/Apple Music metadata, Focus status, AI usage and Todoist snapshots over USB. The local web portal configures the device over Wi‑Fi.
 
-![First-use on device](docs/images/device-first-use.png)
+Music and Focus are **informational**. Change playback and Focus on the Mac. Album artwork is acknowledged and retried over USB; album/year are shown when supplied by the player (Spotify's scripting interface does not supply a year).
 
-*First-use / captive portal on the JC3248 after flash (when Wi‑Fi is not configured yet).*
+The Agent is currently for macOS; release CI builds Apple Silicon. It is not signed/notarized yet. Calendar integration uses the native macOS permission and the accounts already added to the Mac. Tessera only reads the selected calendars; see [Calendar setup](docs/guides/calendar-setup.md).
 
-## Quick start (no hardware)
+## Run without a panel
 
-```bash
-# macOS — see docs/getting-started.md for Linux
+```sh
+# macOS; Linux packages are listed in docs/getting-started.md
 brew install cmake ninja pkg-config sdl2 freetype python3
-
-python3 -m venv .venv
-.venv/bin/pip install -U platformio
-.venv/bin/pio pkg install -e jc3248w535
-
-make finish-host    # native tests + simulator E2E
-make sim            # interactive SDL window (320×480)
+./tools/bootstrap-env.sh
+make finish-host
+make sim
 ```
 
-Full environment setup (macOS + Linux): **[`docs/getting-started.md`](docs/getting-started.md)** · PT: [`docs/pt/getting-started.md`](docs/pt/getting-started.md)
+For the Rust daemon and Mac app, see [Agent development](docs/guides/agent-v2-dev.md).
 
-## Repository layout
+## Project map
 
-| Path | Role |
-|---|---|
-| `firmware/` | Device app (`components/`, `widgets/`, `boards/`) |
-| `simulator/` | Same UI sources on host (LVGL9 + SDL2) + `verify_all` |
-| `web/` | Portal HTML → PROGMEM embed |
-| `agentd/` | Mac companion (Rust daemon + USB capabilities) |
-| `apps/agent-ui/` | Tessera.app (Doctor / setup UI) |
-| `docs/` | Guides, ADRs, feature plans |
-| `Makefile` | Finish gate (`make help`) |
+| Directory | Purpose |
+| --- | --- |
+| `firmware/widgets/` | Independent widget packages |
+| `firmware/components/` | Widget SDK, runtime, UI kit and platform services |
+| `simulator/` | Firmware UI on SDL, fixtures and user journeys |
+| `agentd/` | Rust daemon, native calendar access, USB and integrations |
+| `apps/agent-ui/` | Mac setup and daily configuration |
+| `web/` | Local device configuration portal |
+| `site/` | Public introduction and installation guide |
+| `docs/` | User guides, contributor guides and design history |
 
-More detail: [`docs/STRUCTURE.md`](docs/STRUCTURE.md) · architecture: [`docs/guides/architecture.md`](docs/guides/architecture.md)
+## Verify a change
 
-## Finish gate
+Run `make test`, then `make e2e` and inspect `$SIM_OUT` (default `/tmp/tessera-sim-out`). With a board, continue with `make flash` and `make device`. Browser journeys and hardware automation are described in [testing](docs/guides/testing.md).
 
-Every change that touches product code:
-
-1. `make test` — PlatformIO `native` (Unity)
-2. `make e2e` — simulator build + headless screenshots (`$SIM_OUT`)
-3. `make flash` — only after 1–2 are green
-4. `make device` — USB monitor / manual check on the panel
-
-Shortcuts: `make finish-host` (CI / no board) · `make finish` (+ flash).  
-See [`docs/guides/finish-gate.md`](docs/guides/finish-gate.md).
-
-## Secrets
-
-Do **not** commit `include/secrets.h`, `.pio/`, or `.venv/`.  
-Optional seed: copy `include/secrets.example.h` → `include/secrets.h`. Normal path is portal / NVS.
-
-## Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-## License
-
-Licensed under the [Apache License, Version 2.0](LICENSE). See also [`NOTICE`](NOTICE) for third-party attribution.
-
-## Docs map
-
-| Doc | Purpose |
-|---|---|
-| [Getting started](docs/getting-started.md) | macOS + Linux toolchain |
-| [Architecture](docs/guides/architecture.md) | Layers + widget contract |
-| [Widget authoring](docs/guides/widget-authoring.md) | New widget checklist |
-| [Simulator](docs/guides/simulator.md) | Host harness (not a demo) |
-| [Finish gate](docs/guides/finish-gate.md) | Required verification order |
-| [docs/README.md](docs/README.md) | Full index |
+Do not commit credentials, local builds or private device captures. See [repository assets](docs/guides/repository-assets.md). Licensed under [Apache 2.0](LICENSE); third-party notices are in [NOTICE](NOTICE).

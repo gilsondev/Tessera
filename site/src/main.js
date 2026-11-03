@@ -1,4 +1,4 @@
-const LATEST = new URL("latest.json", import.meta.env.BASE_URL).href;
+const LATEST = new URL(`${import.meta.env.BASE_URL}latest.json`, window.location.origin).href;
 
 async function loadLatest() {
   const note = document.getElementById("version-note");
@@ -15,10 +15,10 @@ async function loadLatest() {
         : `Versão ${ver}`;
     }
     if (foot) foot.textContent = `Agent ${ver}`;
-    const href = j.app_url || j.dmg_url || j.agentd_url;
+    const href = `${import.meta.env.BASE_URL}install.command`;
     if (dl && href) {
       dl.href = href;
-      dl.textContent = `Baixar Agent ${ver}`;
+      dl.textContent = `Instalar Agente ${ver}`;
     }
   } catch {
     if (note) note.textContent = "Release mais recente no GitHub.";

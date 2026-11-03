@@ -23,6 +23,9 @@ void test_calendar_catalog_parse_and_selection(void) {
     char sel[64];
     calendar::format_selection(c, sel, sizeof(sel));
     TEST_ASSERT_EQUAL_STRING("work", sel);
+    TEST_ASSERT_TRUE(calendar::apply_catalog_line(c, "CALENDAR_CATALOG\tv1\t1\tok\tiCloud\tlocal-id\tPessoal\t1A73E8\t1"));
+    TEST_ASSERT_EQUAL_STRING("iCloud",c.items[0].account);
+    TEST_ASSERT_EQUAL_INT(1,c.count);
 }
 
 void test_calendar_auth_pending(void) {

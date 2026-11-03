@@ -8,16 +8,16 @@ use axum::extract::{Query, State};
 use axum::http::Method;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use tower_http::cors::{Any, CorsLayer};
+use serde::{Deserialize, Serialize};
 use tessera_doctor::{prepare_permission, DoctorDeps, DoctorReport, PreparePermission};
 use tessera_logbuf::SharedLogBuf;
-use serde::{Deserialize, Serialize};
 use tessera_profile::{
     load_or_init_with_paths, read_scan_json, write_config, write_machine_display_name,
     write_scan_json, AgentdConfig, ProfilePaths,
 };
 use tessera_scan::{run_scan, ScanConfigEnabled, ScanItem, ScanResult, ScanRoots};
 use tokio::net::TcpListener;
+use tower_http::cors::{Any, CorsLayer};
 
 pub const DEFAULT_IPC_PORT: u16 = 19792;
 
@@ -205,13 +205,24 @@ fn stamp_enabled(result: &mut ScanResult, config: &AgentdConfig) {
     }
 }
 
+static CONFIG_EDITS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn persist_scan(
     paths: &ProfilePaths,
     result: &mut ScanResult,
     body: ScanApplyBody,
 ) -> Result<(AgentdConfig, MachineStatus), String> {
+    let _edit = CONFIG_EDITS
+        .lock()
+        .map_err(|_| "Configuration lock unavailable")?;
     let (mut config, machine) = profile_snapshot(paths)?;
-    let auto = config_from_scan(&config, &result.found, body.found.as_deref());
+    let auto = if body.found.is_none()
+        && (body.display_name.is_some() || body.setup_completed.is_some())
+    {
+        config.clone()
+    } else {
+        config_from_scan(&config, &result.found, body.found.as_deref())
+    };
     config.media = auto.media;
     config.focus = auto.focus;
     config.aitokens = auto.aitokens;
@@ -242,7 +253,9 @@ fn persist_scan(
     ))
 }
 
-async fn v1_status(State(state): State<AppState>) -> Result<Json<StatusResponse>, (axum::http::StatusCode, String)> {
+async fn v1_status(
+    State(state): State<AppState>,
+) -> Result<Json<StatusResponse>, (axum::http::StatusCode, String)> {
     let usb = *state.usb.read().expect("usb lock");
     let (config, machine) = profile_snapshot(&state.profile_paths).map_err(internal)?;
     Ok(Json(StatusResponse {
@@ -261,7 +274,8 @@ async fn v1_health() -> Json<HealthResponse> {
 async fn v1_scan_last(
     State(state): State<AppState>,
 ) -> Result<Json<ScanResponse>, (axum::http::StatusCode, String)> {
-    let last = read_scan_json(&state.profile_paths.scan_json()).map_err(|e| internal(e.to_string()))?;
+    let last =
+        read_scan_json(&state.profile_paths.scan_json()).map_err(|e| internal(e.to_string()))?;
     match last {
         Some(value) => {
             let result: ScanResult =
@@ -288,8 +302,43 @@ async fn v1_scan_post(
         aitokens: config.aitokens,
         calendar: config.calendar,
     };
-    let mut result = run_scan(&ScanRoots::default_home(), enabled);
     let apply = body.map(|Json(b)| b).unwrap_or_default();
+    let editing = apply.found.as_ref().is_some_and(|f| !f.is_empty())
+        || apply.display_name.is_some()
+        || apply.setup_completed.is_some();
+    let mut result = if editing {
+        read_scan_json(&state.profile_paths.scan_json())
+            .ok()
+            .flatten()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or(ScanResult {
+                scanned_at: String::new(),
+                found: vec![],
+            })
+    } else {
+        run_scan(&ScanRoots::default_home(), enabled)
+    };
+    if !editing {
+        // Discovery never changes what the user has chosen to collect.
+        stamp_enabled(&mut result, &config);
+        write_scan_json(
+            &state.profile_paths.scan_json(),
+            &serde_json::to_value(&result).map_err(|e| internal(e.to_string()))?,
+        )
+        .map_err(|e| internal(e.to_string()))?;
+        return Ok(Json(ScanResponse { result }));
+    }
+    if let Some(changes) = &apply.found {
+        for item in changes {
+            if !result.found.iter().any(|f| f.id == item.id) {
+                result.found.push(ScanItem {
+                    id: item.id.clone(),
+                    state: tessera_scan::ScanState::NeedsAuth,
+                    enabled: item.enabled,
+                });
+            }
+        }
+    }
     let (_, _) = persist_scan(&state.profile_paths, &mut result, apply).map_err(internal)?;
     Ok(Json(ScanResponse { result }))
 }
@@ -378,10 +427,7 @@ struct LogsResponse {
     lines: Vec<String>,
 }
 
-async fn v1_logs(
-    State(state): State<AppState>,
-    Query(q): Query<LogsQuery>,
-) -> Json<LogsResponse> {
+async fn v1_logs(State(state): State<AppState>, Query(q): Query<LogsQuery>) -> Json<LogsResponse> {
     let tail = q.tail.unwrap_or(200).clamp(1, 2000);
     let mut lines = state.logs.tail(tail);
     if lines.is_empty() {
@@ -411,19 +457,46 @@ fn internal(err: String) -> (axum::http::StatusCode, String) {
     (axum::http::StatusCode::INTERNAL_SERVER_ERROR, err)
 }
 
+async fn trusted_origin(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Some(origin) = request.headers().get("origin") {
+        if !matches!(
+            origin.to_str().unwrap_or(""),
+            "tauri://localhost"
+                | "http://tauri.localhost"
+                | "https://tauri.localhost"
+                | "http://localhost:1420"
+                | "http://127.0.0.1:1420"
+        ) {
+            return axum::http::StatusCode::FORBIDDEN.into_response();
+        }
+    }
+    next.run(request).await
+}
+
 pub fn router(state: AppState) -> Router {
     // Companion UI (Tauri WKWebView) is cross-origin → need CORS on localhost IPC.
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::OPTIONS,
+        .allow_origin([
+            "tauri://localhost"
+                .parse::<axum::http::HeaderValue>()
+                .unwrap(),
+            "http://tauri.localhost".parse().unwrap(),
+            "https://tauri.localhost".parse().unwrap(),
+            "http://localhost:1420".parse().unwrap(),
+            "http://127.0.0.1:1420".parse().unwrap(),
         ])
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(Any);
 
     Router::new()
         .route("/v1/status", get(v1_status))
+        .route("/v1/calendar", get(v1_calendar))
+        .route("/v1/calendar/connect", post(v1_calendar_connect))
+        .route("/v1/calendar/selection", post(v1_calendar_selection))
         .route("/v1/health", get(v1_health))
         .route("/v1/scan", post(v1_scan_post))
         .route("/v1/scan/last", get(v1_scan_last))
@@ -437,11 +510,18 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/panel/refresh", post(v1_panel_refresh))
         .route("/v1/panel/token", post(v1_panel_token))
         .route("/v1/panel/weather", post(v1_panel_weather))
-        .route("/v1/panel/calendar/selection", post(v1_panel_calendar_selection))
-        .route("/v1/panel/calendar/add_account", post(v1_panel_calendar_add))
+        .route(
+            "/v1/panel/calendar/selection",
+            post(v1_panel_calendar_selection),
+        )
+        .route(
+            "/v1/panel/calendar/add_account",
+            post(v1_panel_calendar_add),
+        )
         .route("/v1/logs", get(v1_logs))
         .route("/v1/update", get(v1_update_get).post(v1_update_post))
         .layer(cors)
+        .layer(axum::middleware::from_fn(trusted_origin))
         .with_state(state)
 }
 
@@ -686,10 +766,7 @@ async fn v1_panel_calendar_selection(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<crate::panel::PanelState>, (axum::http::StatusCode, String)> {
-    let sel = body
-        .get("selection")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let sel = body.get("selection").and_then(|v| v.as_str()).unwrap_or("");
     state.logs.append(format!(
         "{} INFO  panel Mac→painel · calendar · calendários={}",
         crate::logutil::stamp(),
@@ -744,9 +821,8 @@ mod tests {
 
     fn test_state(dir: &tempfile::TempDir) -> AppState {
         let paths = ProfilePaths::from_tessera_root(dir.path());
-        let logs = Arc::new(
-            tessera_logbuf::LogBuf::with_file(paths.agentd_log(), 100).expect("test log"),
-        );
+        let logs =
+            Arc::new(tessera_logbuf::LogBuf::with_file(paths.agentd_log(), 100).expect("test log"));
         AppState::new(paths, logs)
     }
 
@@ -815,7 +891,54 @@ mod tests {
             .headers()
             .get("access-control-allow-origin")
             .and_then(|v| v.to_str().ok());
-        assert_eq!(allow, Some("*"));
+        assert_eq!(allow, Some("https://tauri.localhost"));
+    }
+
+    #[tokio::test]
+    async fn unrelated_website_cannot_trigger_calendar_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let response = router(test_state(&dir))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/calendar/connect")
+                    .header("origin", "https://unrelated.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn capability_save_preserves_scan_and_unrelated_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(&dir);
+        let paths = state.profile_paths.clone();
+        let (before, _) = profile_snapshot(&paths).unwrap();
+        write_scan_json(&paths.scan_json(), &serde_json::json!({"scanned_at":"discovery-once","found":[{"id":"media","state":"ready","enabled":true}]})).unwrap();
+        let response = router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/scan")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"found":[{"id":"media","enabled":false}]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["scanned_at"], "discovery-once");
+        let (after, _) = profile_snapshot(&paths).unwrap();
+        assert!(!after.media);
+        assert_eq!(after.focus, before.focus);
+        assert_eq!(after.calendar, before.calendar);
     }
 
     #[tokio::test]
@@ -915,4 +1038,50 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         assert!(addr.ip().is_loopback());
     }
+}
+
+async fn v1_calendar(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let paths = tessera_caps_calendar::CalendarPaths {
+        root: state.profile_paths.tessera_root.join("calendar"),
+    };
+    tokio::task::spawn_blocking(move || Json(tessera_caps_calendar::native::status(&paths)))
+        .await
+        .map_err(|e| internal(e.to_string()))
+}
+async fn v1_calendar_connect(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    tessera_caps_calendar::native::start(tessera_caps_calendar::CalendarPaths {
+        root: state.profile_paths.tessera_root.join("calendar"),
+    })
+    .map(Json)
+    .map_err(internal)
+}
+async fn v1_calendar_selection(
+    State(state): State<AppState>,
+    Json(body): Json<Vec<String>>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let paths = tessera_caps_calendar::CalendarPaths {
+        root: state.profile_paths.tessera_root.join("calendar"),
+    };
+    tokio::task::spawn_blocking(move || {
+        let state = tessera_caps_calendar::native::status(&paths);
+        let valid = state["calendars"].as_array().cloned().unwrap_or_default();
+        if body.iter().any(|id| !valid.iter().any(|r| r["id"] == *id)) {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                "Calendário desconhecido".into(),
+            ));
+        }
+        tessera_caps_calendar::native::private_json(
+            &paths.selection_json(),
+            &serde_json::json!(body),
+        )
+        .map_err(internal)?;
+        Ok(Json(tessera_caps_calendar::native::status(&paths)))
+    })
+    .await
+    .map_err(|e| internal(e.to_string()))?
 }

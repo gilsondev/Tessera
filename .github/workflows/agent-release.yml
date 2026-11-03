@@ -42,6 +42,27 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Resolved version: $V"
 
+      - name: Align binary and app versions with the release
+        env:
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          python3 - <<'PYVERSION'
+          import json, os, pathlib, re
+          version = os.environ["RELEASE_VERSION"]
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+              raise SystemExit("Invalid release version")
+          for name in ["agentd/Cargo.toml", "apps/agent-ui/src-tauri/Cargo.toml"]:
+              path = pathlib.Path(name)
+              text, count = re.subn(r'^version = "[^"]+"', 'version = "' + version + '"', path.read_text(), count=1, flags=re.M)
+              if count != 1:
+                  raise SystemExit("Missing version in " + name)
+              path.write_text(text)
+          path = pathlib.Path("apps/agent-ui/src-tauri/tauri.conf.json")
+          doc = json.loads(path.read_text())
+          doc["version"] = version
+          path.write_text(json.dumps(doc, indent=2) + "\n")
+          PYVERSION
+
       - name: Test agentd
         working-directory: agentd
         run: cargo test --workspace
@@ -52,7 +73,7 @@ jobs:
 
       - name: Build Tessera.app
         working-directory: apps/agent-ui
-        run: npm install && npm run tauri build
+        run: npm ci && npm run tauri build
 
       - name: Package artifacts
         id: pack

@@ -3,7 +3,7 @@
 //! Non-macOS builds expose a stub that never sends wakes (poll-only).
 
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::OnceLock;
+use std::sync::{Mutex, Once};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostWake {
@@ -12,18 +12,19 @@ pub enum HostWake {
     Theme,
 }
 
-static MEDIA_TX: OnceLock<Sender<HostWake>> = OnceLock::new();
-static FOCUS_TX: OnceLock<Sender<HostWake>> = OnceLock::new();
-static THEME_TX: OnceLock<Sender<HostWake>> = OnceLock::new();
+static MEDIA_TX: Mutex<Option<Sender<HostWake>>> = Mutex::new(None);
+static FOCUS_TX: Mutex<Option<Sender<HostWake>>> = Mutex::new(None);
+static THEME_TX: Mutex<Option<Sender<HostWake>>> = Mutex::new(None);
+static OBSERVERS: Once = Once::new();
 
 /// Start the observer thread (idempotent). Returns the receiver end for the USB loop.
 pub fn start() -> Receiver<HostWake> {
     let (tx, rx) = mpsc::channel();
-    let _ = MEDIA_TX.set(tx.clone());
-    let _ = FOCUS_TX.set(tx.clone());
-    let _ = THEME_TX.set(tx);
+    *MEDIA_TX.lock().unwrap() = Some(tx.clone());
+    *FOCUS_TX.lock().unwrap() = Some(tx.clone());
+    *THEME_TX.lock().unwrap() = Some(tx);
     #[cfg(target_os = "macos")]
-    macos::spawn_run_loop();
+    OBSERVERS.call_once(macos::spawn_run_loop);
     rx
 }
 
@@ -55,10 +56,7 @@ pub fn macos_prefers_dark() -> bool {
 }
 
 pub fn theme_line(dark: bool) -> String {
-    format!(
-        "THEME\tv1\t1\t{}",
-        if dark { "dark" } else { "light" }
-    )
+    format!("THEME\tv1\t1\t{}", if dark { "dark" } else { "light" })
 }
 
 #[cfg(target_os = "macos")]
@@ -140,7 +138,7 @@ mod macos {
         _: *const c_void,
         _: CFDictionaryRef,
     ) {
-        if let Some(tx) = MEDIA_TX.get() {
+        if let Some(tx) = MEDIA_TX.lock().unwrap().as_ref() {
             let _ = tx.send(HostWake::Media);
         }
     }
@@ -152,7 +150,7 @@ mod macos {
         _: *const c_void,
         _: CFDictionaryRef,
     ) {
-        if let Some(tx) = FOCUS_TX.get() {
+        if let Some(tx) = FOCUS_TX.lock().unwrap().as_ref() {
             let _ = tx.send(HostWake::Focus);
         }
     }
@@ -164,16 +162,14 @@ mod macos {
         _: *const c_void,
         _: CFDictionaryRef,
     ) {
-        if let Some(tx) = THEME_TX.get() {
+        if let Some(tx) = THEME_TX.lock().unwrap().as_ref() {
             let _ = tx.send(HostWake::Theme);
         }
     }
 
     fn cfstr(s: &str) -> CFStringRef {
         let c = std::ffi::CString::new(s).expect("cfstr");
-        unsafe {
-            CFStringCreateWithCString(ptr::null(), c.as_ptr(), K_CF_STRING_ENCODING_UTF8)
-        }
+        unsafe { CFStringCreateWithCString(ptr::null(), c.as_ptr(), K_CF_STRING_ENCODING_UTF8) }
     }
 
     pub fn prefers_dark() -> bool {
@@ -233,5 +229,24 @@ mod macos {
                 CFRunLoopRun();
             })
             .expect("spawn mac_events");
+    }
+}
+
+#[cfg(test)]
+mod reconnect_tests {
+    use super::*;
+    #[test]
+    fn notifications_follow_the_latest_usb_session() {
+        let old = start();
+        let current = start();
+        MEDIA_TX
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .send(HostWake::Media)
+            .unwrap();
+        assert_eq!(drain(&current), (true, false, false));
+        assert!(!drain(&old).0);
     }
 }

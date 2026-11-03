@@ -69,7 +69,11 @@ device_resources::Sample device_resources::sample() {
     out.psram_total_b = static_cast<uint32_t>(heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
     out.psram_largest_b = static_cast<uint32_t>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 
-    out.flash_sketch_b = ESP.getSketchSize();
+    // Arduino getSketchSize() verifies the entire flash image (~700 ms here).
+    // The running image cannot change before reboot; never repeat this in a
+    // status publish or heartbeat while the clock is animating.
+    static const uint32_t sketch_bytes = ESP.getSketchSize();
+    out.flash_sketch_b = sketch_bytes;
     // Dual-OTA: FreeSketchSpace is the other slot. Factory-only tables return 0 even when
     // the running partition still has room — fall back to partition size − sketch.
     const uint32_t ota_free = ESP.getFreeSketchSpace();

@@ -6,6 +6,15 @@
 // Follows face_prefs time format (HH:MM or HH:MM:SS).
 namespace screensaver {
 
+struct Timing {
+    uint32_t max_gap_ms = 0;
+    uint32_t changes = 0;
+    uint32_t snaps = 0;
+    uint32_t active = 0;
+    char digits[7] = {};
+};
+Timing timing();
+
 void begin();
 void show();
 void hide();

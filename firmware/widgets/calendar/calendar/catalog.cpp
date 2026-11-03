@@ -72,7 +72,7 @@ bool calendar::apply_catalog_line(Catalog &catalog, const char *line) {
         char selected[4];
         if (!next_field(&cursor, account, sizeof(account)) || !account[0]) break;
         // Stop chunk on garbage (e.g. USB line merge with AITOKENS / CALENDAR).
-        if (!strchr(account, '@')) break;
+        if (eq(account, "v1") || strncmp(account, "CALENDAR", 8) == 0 || strncmp(account, "AITOKEN", 7) == 0) break;
         if (!next_field(&cursor, id, sizeof(id)) || !id[0]) break;
         if (!next_field(&cursor, name, sizeof(name))) break;
         if (!next_field(&cursor, color, sizeof(color))) break;

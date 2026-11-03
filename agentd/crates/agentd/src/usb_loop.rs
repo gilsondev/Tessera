@@ -4,21 +4,13 @@ use std::io::Read;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use tessera_caps_focus::{
-    focus_line_changed, FocusCapability, FOCUS_POLL_INTERVAL_S, FOCUS_PUSH_INTERVAL_S,
-};
-use tessera_caps_aitokens::{
-    aitokens_line_changed, AiTokensCapability, AiTokensFilter, AITOKENS_PUSH_INTERVAL_S,
-};
-use tessera_caps_calendar::{
-    calendar_line_changed, CalendarCapability, CALENDAR_PUSH_INTERVAL_S,
-};
-use tessera_caps_todoist::{
-    todoist_line_changed, TodoistCapability, TODOIST_PUSH_INTERVAL_S,
-};
-use tessera_caps_media::{
-    media_line_changed, MediaCapability, MEDIA_POLL_INTERVAL_S, MEDIA_PUSH_INTERVAL_S,
-};
+use std::collections::VecDeque;
+use std::sync::mpsc::{self, SyncSender};
+use tessera_caps_aitokens::{AiTokensCapability, AiTokensFilter};
+use tessera_caps_calendar::CalendarCapability;
+use tessera_caps_focus::FocusCapability;
+use tessera_caps_media::{cover, MediaCapability, MediaInfo, MEDIA_COVER_EDGE};
+use tessera_caps_todoist::TodoistCapability;
 use tessera_logbuf::SharedLogBuf;
 use tessera_protocol::agent_ok_line;
 use tessera_usb::{open_tessera_port, write_handshake, write_lines, PortName, UsbError};
@@ -34,7 +26,6 @@ const AGENT_HEARTBEAT_INTERVAL_S: u64 = 8;
 
 const ONCE_READ_S: u64 = 2;
 const RETRY_S: f64 = 1.5;
-const CONFIG_RELOAD_S: u64 = 2;
 
 type Logs = Option<SharedLogBuf>;
 
@@ -58,21 +49,14 @@ fn load_caps(paths: &ProfilePaths) -> (bool, bool, bool, AiTokensFilter, bool, b
 
 fn log_from_panel(logs: &Logs, line: &str) {
     let w = widget_of_line(line);
-    let kind = if line.contains('?') {
-        "query"
-    } else {
-        "cmd"
-    };
+    let kind = if line.contains('?') { "query" } else { "cmd" };
     // Never echo secrets (Todoist token migration / TOKEN).
     let summary = if line.starts_with("TODOIST_TOKEN\t") || line.starts_with("TOKEN\t") {
         "token (recebido)".to_string()
     } else {
         describe_usb(line)
     };
-    logutil::info(
-        logs,
-        format!("usb painel→Mac · {w} · {kind} · {summary}"),
-    );
+    logutil::info(logs, format!("usb painel→Mac · {w} · {kind} · {summary}"));
 }
 
 fn log_to_panel(logs: &Logs, widget: &str, action: &str, line: &str) {
@@ -137,393 +121,259 @@ fn set_usb_link(link: &Option<Arc<RwLock<UsbLink>>>, up: bool) {
     }
 }
 
-/// Blocking loop on a fixed serial path (daemon background thread).
+/// Every capability owns a worker. Network, Keychain and AppleScript must never
+/// delay USB heartbeats or a music change. Bounded queues coalesce repeated queries.
+struct Reply {
+    lines: Vec<String>,
+    track: Option<MediaInfo>,
+    cover_key: Option<String>,
+}
+fn worker<F>(tx: mpsc::Sender<Reply>, mut handle: F) -> SyncSender<String>
+where
+    F: FnMut(&str) -> Reply + Send + 'static,
+{
+    let (send, recv) = mpsc::sync_channel::<String>(8);
+    std::thread::spawn(move || {
+        while let Ok(cmd) = recv.recv() {
+            if tx.send(handle(&cmd)).is_err() {
+                break;
+            }
+        }
+    });
+    send
+}
+fn lines(lines: Vec<String>) -> Reply {
+    Reply {
+        lines,
+        track: None,
+        cover_key: None,
+    }
+}
+
 pub fn run_session(
     path: &str,
     profile_paths: ProfilePaths,
     usb_link: Option<Arc<RwLock<UsbLink>>>,
     logs: Logs,
 ) -> Result<(), UsbError> {
-    logutil::info(&logs, format!("usb: abrindo sessão {path}"));
     let mut port = open_tessera_port(path)?;
     write_handshake(&mut port, &agent_ok_line())?;
     set_usb_link(&usb_link, true);
-    log_to_panel(&logs, "agent", "handshake", &agent_ok_line());
-
-    let (
-        mut media_enabled,
-        mut focus_enabled,
-        mut aitokens_enabled,
-        filter,
-        mut calendar_enabled,
-        mut todoist_enabled,
-    ) = load_caps(&profile_paths);
-    logutil::info(
-        &logs,
-        format!(
-            "usb: caps media={media_enabled} focus={focus_enabled} aitokens={aitokens_enabled} calendar={calendar_enabled} todoist={todoist_enabled}"
-        ),
-    );
+    let (reply_tx, reply_rx) = mpsc::channel::<Reply>();
     let mut media = MediaCapability::with_default_watcher();
+    let media_tx = worker(reply_tx.clone(), move |cmd| {
+        let out = media.handle_line(cmd);
+        Reply {
+            lines: out,
+            track: media.current_info(),
+            cover_key: None,
+        }
+    });
     let mut focus = FocusCapability::new();
-    let mut aitokens = AiTokensCapability::with_filter(filter);
+    let focus_tx = worker(reply_tx.clone(), move |cmd| lines(focus.handle_line(cmd)));
+    let mut ai = AiTokensCapability::with_filter(load_caps(&profile_paths).3);
+    let ai_paths = profile_paths.clone();
+    let ai_tx = worker(reply_tx.clone(), move |cmd| {
+        ai.set_filter(load_caps(&ai_paths).3);
+        lines(ai.handle_line(cmd))
+    });
     let mut calendar = CalendarCapability::default();
+    let calendar_tx = worker(reply_tx.clone(), move |cmd| {
+        lines(calendar.handle_line(cmd))
+    });
     let mut todoist = TodoistCapability::default();
-    let mut last_config_reload = Instant::now();
+    let todoist_tx = worker(reply_tx.clone(), move |cmd| lines(todoist.handle_line(cmd)));
+    let (cover_tx, cover_rx) = mpsc::sync_channel::<MediaInfo>(1);
+    std::thread::spawn(move || {
+        let mut cache: VecDeque<(String, Vec<String>)> = VecDeque::new();
+        while let Ok(mut info) = cover_rx.recv() {
+            while let Ok(newer) = cover_rx.try_recv() {
+                info = newer;
+            }
+            let key = cover::cover_key(&info);
+            let cached = cache
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone());
+            let chunks = cached.or_else(|| {
+                let bytes = cover::fetch_cover_bytes(&info)?;
+                let rgb = cover::jpeg_or_png_to_rgb565(&bytes, MEDIA_COVER_EDGE)?;
+                Some(cover::encode_cover_chunks(
+                    &key,
+                    MEDIA_COVER_EDGE,
+                    MEDIA_COVER_EDGE,
+                    &rgb,
+                ))
+            });
+            if let Some(chunks) = chunks {
+                if !cache.iter().any(|(k, _)| *k == key) {
+                    cache.push_back((key.clone(), chunks.clone()));
+                    if cache.len() > 8 {
+                        cache.pop_front();
+                    }
+                }
+                if reply_tx
+                    .send(Reply {
+                        lines: chunks,
+                        track: None,
+                        cover_key: Some(key),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }
+    });
     let wake_rx = mac_events::start();
-    let mut buf = Vec::<u8>::new();
-    let mut scratch = [0u8; 256];
-    let mut last_media_heartbeat = Instant::now()
-        .checked_sub(Duration::from_secs(MEDIA_PUSH_INTERVAL_S))
-        .unwrap_or_else(Instant::now);
-    let mut last_media_poll = Instant::now()
-        .checked_sub(Duration::from_secs(MEDIA_POLL_INTERVAL_S))
-        .unwrap_or_else(Instant::now);
-    let mut last_focus_heartbeat = Instant::now()
-        .checked_sub(Duration::from_secs(FOCUS_PUSH_INTERVAL_S))
-        .unwrap_or_else(Instant::now);
-    let mut last_focus_poll = Instant::now()
-        .checked_sub(Duration::from_secs(FOCUS_POLL_INTERVAL_S))
-        .unwrap_or_else(Instant::now);
-    let mut last_cover_key = String::new();
-    let mut last_aitokens_heartbeat = Instant::now()
-        .checked_sub(Duration::from_secs(AITOKENS_PUSH_INTERVAL_S))
-        .unwrap_or_else(Instant::now);
-    let mut last_calendar_heartbeat = Instant::now()
-        .checked_sub(Duration::from_secs(CALENDAR_PUSH_INTERVAL_S))
-        .unwrap_or_else(Instant::now);
-    let mut last_todoist_heartbeat = Instant::now()
-        .checked_sub(Duration::from_secs(TODOIST_PUSH_INTERVAL_S))
-        .unwrap_or_else(Instant::now);
-    let mut last_agent_heartbeat = Instant::now();
-    // Push macOS appearance on connect so Auto mode matches before the first change.
-    let mut last_theme_dark = {
-        let dark = mac_events::macos_prefers_dark();
-        let line = mac_events::theme_line(dark);
-        write_lines(&mut port, &[line.clone()])?;
-        log_to_panel(&logs, "theme", "push", &line);
-        Some(dark)
-    };
-
-    loop {
-        if last_config_reload.elapsed() >= Duration::from_secs(CONFIG_RELOAD_S) {
-            let (m, f, a, filter, cal, td) = load_caps(&profile_paths);
-            if (m, f, a, cal, td)
-                != (
-                    media_enabled,
-                    focus_enabled,
-                    aitokens_enabled,
-                    calendar_enabled,
-                    todoist_enabled,
-                )
-            {
-                logutil::info(
-                    &logs,
-                    format!(
-                        "usb: caps atualizadas media={m} focus={f} aitokens={a} calendar={cal} todoist={td}"
-                    ),
-                );
+    let now = Instant::now();
+    let mut deadlines = [now; 5];
+    let mut heartbeat = now;
+    let mut current_key = String::new();
+    let mut sent_cover = String::new();
+    let mut cover_retry_at = Instant::now();
+    let mut pending_cover: VecDeque<String> = VecDeque::new();
+    let mut last_logged = std::collections::HashMap::<String, String>::new();
+    let mut buf = Vec::new();
+    let mut scratch = [0u8; 4096];
+    let result = (|| -> Result<(), UsbError> {
+        loop {
+            let (m, f, a, _, c, t) = load_caps(&profile_paths);
+            let enabled = [m, f, a, c, t];
+            let workers = [&media_tx, &focus_tx, &ai_tx, &calendar_tx, &todoist_tx];
+            let queries = ["MEDIA?", "FOCUS?", "AITOKENS?", "CALENDAR?", "TODOIST?"];
+            // Media safety poll is 2s; DNC events request immediately. Others may
+            // refresh slowly on their own workers without starving media/USB.
+            let periods = [2, 2, 30, 15, 45];
+            let (wake_media, wake_focus, wake_theme) = mac_events::drain(&wake_rx);
+            if wake_media {
+                deadlines[0] = Instant::now();
             }
-            media_enabled = m;
-            focus_enabled = f;
-            aitokens_enabled = a;
-            calendar_enabled = cal;
-            todoist_enabled = td;
-            aitokens.set_filter(filter);
-            last_config_reload = Instant::now();
-        }
-        match port.read(&mut scratch) {
-            Ok(0) => {}
-            Ok(n) => {
-                buf.extend_from_slice(&scratch[..n]);
-                while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
-                    let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
-                    let text =
-                        String::from_utf8_lossy(&line_bytes[..line_bytes.len().saturating_sub(1)]);
-                    let text = text.trim();
-                    if text.is_empty() {
-                        continue;
+            if wake_focus {
+                deadlines[1] = Instant::now();
+            }
+            if wake_theme {
+                write_lines(
+                    &mut port,
+                    &[mac_events::theme_line(mac_events::macos_prefers_dark())],
+                )?;
+            }
+            for i in 0..5 {
+                if enabled[i] && Instant::now() >= deadlines[i] {
+                    let _ = workers[i].try_send(queries[i].into());
+                    deadlines[i] = Instant::now() + Duration::from_secs(periods[i]);
+                }
+            }
+            if Instant::now() >= heartbeat {
+                write_lines(&mut port, &[agent_ok_line()])?;
+                heartbeat = Instant::now() + Duration::from_secs(AGENT_HEARTBEAT_INTERVAL_S);
+            }
+            match port.read(&mut scratch) {
+                Ok(n) => buf.extend_from_slice(&scratch[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(e) => return Err(e.into()),
+            }
+            if buf.len() > 64 * 1024 {
+                buf.clear();
+            }
+            while let Some(pos) = buf.iter().position(|b| *b == b'\n') {
+                let bytes: Vec<u8> = buf.drain(..=pos).collect();
+                let text = String::from_utf8_lossy(&bytes).trim().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                log_from_panel(&logs, &text);
+                if text.starts_with("THEME") {
+                    write_lines(
+                        &mut port,
+                        &[mac_events::theme_line(mac_events::macos_prefers_dark())],
+                    )?;
+                } else if let Some(key) = text.strip_prefix("MEDIA_COVER_OK\t") {
+                    if key == current_key && key != sent_cover {
+                        sent_cover = key.into();
+                        logutil::info(
+                            &logs,
+                            "usb Mac→painel · media · capa confirmada pelo dispositivo",
+                        );
                     }
-                    // Queries (`NAME?`) always answer so the panel isn't blind when a
-                    // capability toggle is off; mutations + push stay gated by config.
-                    let is_query = text.contains('?');
-                    log_from_panel(&logs, text);
-                    if text.starts_with("MEDIA") && (media_enabled || is_query) {
-                        let replies = media.handle_line(text);
-                        if !replies.is_empty() {
-                            write_lines(&mut port, &replies)?;
-                            for reply in &replies {
-                                if reply.starts_with("MEDIA\t") {
-                                    media.note_pushed(reply);
-                                    log_to_panel(
-                                        &logs,
-                                        "media",
-                                        if is_query { "reply" } else { "push" },
-                                        reply,
-                                    );
-                                } else if reply.starts_with("COVER") {
-                                    log_to_panel(&logs, "media", "cover", reply);
-                                }
-                            }
-                            last_media_heartbeat = Instant::now();
-                            last_media_poll = Instant::now();
+                } else if text.starts_with("MEDIA_COVER?") {
+                    sent_cover.clear();
+                    deadlines[0] = Instant::now();
+                } else if let Some(i) = ["MEDIA", "FOCUS", "AITOKENS", "CALENDAR", "TODOIST"]
+                    .iter()
+                    .position(|p| text.starts_with(p))
+                {
+                    if enabled[i] || text.contains('?') {
+                        if workers[i].try_send(text).is_err() {
+                            logutil::warn(&logs, "capability busy; query will retry");
                         }
-                    } else if text.starts_with("FOCUS") && (focus_enabled || is_query) {
-                        let replies = focus.handle_line(text);
-                        if !replies.is_empty() {
-                            write_lines(&mut port, &replies)?;
-                            for reply in &replies {
-                                if reply.starts_with("FOCUS\t") {
-                                    focus.note_pushed(reply);
-                                    log_to_panel(
-                                        &logs,
-                                        "focus",
-                                        if is_query { "reply" } else { "push" },
-                                        reply,
-                                    );
-                                }
-                            }
-                            last_focus_heartbeat = Instant::now();
-                            last_focus_poll = Instant::now();
+                    }
+                }
+            }
+            while let Ok(reply) = reply_rx.try_recv() {
+                if reply.track.is_none()
+                    && reply.cover_key.is_none()
+                    && reply.lines.iter().any(|l| l.starts_with("MEDIA\tv1\t0"))
+                {
+                    current_key.clear();
+                    sent_cover.clear();
+                    pending_cover.clear();
+                }
+                if let Some(info) = reply.track {
+                    let key = cover::cover_key(&info);
+                    if key != current_key {
+                        current_key = key.clone();
+                        sent_cover.clear();
+                        pending_cover.clear();
+                        cover_retry_at = Instant::now();
+                    }
+                    if info.state != tessera_caps_media::MediaState::Stopped
+                        && key != sent_cover
+                        && pending_cover.is_empty()
+                        && Instant::now() >= cover_retry_at
+                    {
+                        if cover_tx.try_send(info).is_ok() {
+                            cover_retry_at = Instant::now() + Duration::from_secs(5);
                         }
-                    } else if text.starts_with("AITOKENS") && (aitokens_enabled || is_query) {
-                        let replies = aitokens.handle_line(text);
-                        if !replies.is_empty() {
-                            write_lines(&mut port, &replies)?;
-                            for reply in &replies {
-                                if reply.starts_with("AITOKENS\t") {
-                                    aitokens.note_pushed(reply);
-                                    log_to_panel(
-                                        &logs,
-                                        "aitokens",
-                                        if is_query { "reply" } else { "push" },
-                                        reply,
-                                    );
-                                }
-                            }
-                            last_aitokens_heartbeat = Instant::now();
-                        }
-                    } else if text.starts_with("CALENDAR") && (calendar_enabled || is_query) {
-                        let replies = calendar.handle_line(text);
-                        if !replies.is_empty() {
-                            write_lines(&mut port, &replies)?;
-                            for reply in &replies {
-                                if reply.starts_with("CALENDAR\t") {
-                                    calendar.note_pushed(reply);
-                                    log_to_panel(
-                                        &logs,
-                                        "calendar",
-                                        if is_query { "reply" } else { "push" },
-                                        reply,
-                                    );
+                    }
+                }
+                if let Some(key) = reply.cover_key {
+                    if key == current_key && key != sent_cover && pending_cover.is_empty() {
+                        pending_cover = reply.lines.into();
+                    }
+                } else if !reply.lines.is_empty() {
+                    write_lines(&mut port, &reply.lines)?;
+                    for line in &reply.lines {
+                        if !line.starts_with("MEDIA_COVER") {
+                            let prefix = line.split('\t').next().unwrap_or("");
+                            if !matches!(prefix, "MEDIA" | "FOCUS")
+                                || last_logged.get(prefix) != Some(line)
+                            {
+                                log_to_panel(&logs, widget_of_line(line), "push", line);
+                                if matches!(prefix, "MEDIA" | "FOCUS") {
+                                    last_logged.insert(prefix.into(), line.clone());
                                 }
                             }
                         }
-                    } else if text.starts_with("TODOIST") && (todoist_enabled || is_query) {
-                        let replies = todoist.handle_line(text);
-                        if !replies.is_empty() {
-                            let is_close_ack = replies
-                                .iter()
-                                .any(|r| r.starts_with("TODOIST_CLOSE\tv1\t"));
-                            if is_close_ack {
-                                write_lines(&mut port, &replies)?;
-                                for reply in &replies {
-                                    log_to_panel(&logs, "todoist", "close-ack", reply);
-                                }
-                            } else {
-                                // Always answer — dropping a duplicate once left the panel
-                                // with empty lists until the Mac cache happened to change.
-                                write_lines(&mut port, &replies)?;
-                                todoist.note_pushed(&replies);
-                                last_todoist_heartbeat = Instant::now();
-                                log_to_panel(
-                                    &logs,
-                                    "todoist",
-                                    if is_query { "reply" } else { "push" },
-                                    &format!("{} linha(s)", replies.len()),
-                                );
-                            }
-                        }
-                    } else if text.starts_with("THEME") {
-                        let dark = mac_events::macos_prefers_dark();
-                        let line = mac_events::theme_line(dark);
-                        write_lines(&mut port, &[line.clone()])?;
-                        last_theme_dark = Some(dark);
-                        log_to_panel(&logs, "theme", "reply", &line);
                     }
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-            Err(e) => {
-                set_usb_link(&usb_link, false);
-                logutil::warn(&logs, format!("usb: link caiu — {e}"));
-                return Err(e.into());
-            }
-        }
-
-        if last_agent_heartbeat.elapsed() >= Duration::from_secs(AGENT_HEARTBEAT_INTERVAL_S) {
-            write_lines(&mut port, &[agent_ok_line()])?;
-            last_agent_heartbeat = Instant::now();
-            // Heartbeat is frequent — skip Activity spam; stderr only.
-            eprintln!("Tessera: AGENT heartbeat → painel");
-        }
-
-        // DNC / Focus / Theme notifications → immediate push (coalesced).
-        let (wake_media, wake_focus, wake_theme) = mac_events::drain(&wake_rx);
-        if wake_focus {
-            std::thread::sleep(Duration::from_millis(80));
-        }
-        if wake_theme {
-            std::thread::sleep(Duration::from_millis(50));
-            let dark = mac_events::macos_prefers_dark();
-            if last_theme_dark != Some(dark) {
-                let line = mac_events::theme_line(dark);
-                write_lines(&mut port, &[line.clone()])?;
-                last_theme_dark = Some(dark);
-                log_to_panel(&logs, "theme", "push", &line);
-            }
-        }
-
-        if media_enabled {
-            let poll_due =
-                last_media_poll.elapsed() >= Duration::from_secs(MEDIA_POLL_INTERVAL_S);
-            let heartbeat_due =
-                last_media_heartbeat.elapsed() >= Duration::from_secs(MEDIA_PUSH_INTERVAL_S);
-            if wake_media || poll_due || heartbeat_due {
-                if poll_due {
-                    last_media_poll = Instant::now();
-                }
-                let line = media.build_line();
-                let changed = media_line_changed(media.last_pushed_line(), &line);
-                let push = wake_media || heartbeat_due || changed;
-                if push {
-                    write_lines(&mut port, &[line.clone()])?;
-                    media.note_pushed(&line);
-                    last_media_heartbeat = Instant::now();
-                    let action = if wake_media {
-                        "wake"
-                    } else if changed {
-                        "change"
-                    } else {
-                        "heartbeat"
-                    };
-                    // Heartbeat unchanged is noisy — log only wake/change.
-                    if action != "heartbeat" || changed {
-                        log_to_panel(&logs, "media", action, &line);
-                    }
-                    if let Some((key, chunks)) = media.build_cover_chunks() {
-                        if key != last_cover_key {
-                            write_lines(&mut port, &chunks)?;
-                            last_cover_key = key;
-                            logutil::info(
-                                &logs,
-                                format!(
-                                    "usb Mac→painel · media · cover · {} chunk(s)",
-                                    chunks.len()
-                                ),
-                            );
-                        }
-                    }
+            // Small batches keep commands and metadata responsive during art transfer.
+            for _ in 0..4 {
+                if let Some(line) = pending_cover.pop_front() {
+                    tessera_usb::write_line(&mut port, &line)?;
+                    // Confirmation comes from MEDIA_COVER_OK; retry after 5s if absent.
+                } else {
+                    break;
                 }
             }
         }
-
-        if focus_enabled {
-            let poll_due =
-                last_focus_poll.elapsed() >= Duration::from_secs(FOCUS_POLL_INTERVAL_S);
-            let heartbeat_due =
-                last_focus_heartbeat.elapsed() >= Duration::from_secs(FOCUS_PUSH_INTERVAL_S);
-            let db_dirty = (wake_focus || poll_due) && focus.poll_dirty();
-            if poll_due {
-                last_focus_poll = Instant::now();
-            }
-            if wake_focus || poll_due || heartbeat_due {
-                let line = focus.build_line();
-                let changed = focus_line_changed(focus.last_pushed_line(), &line);
-                let push = wake_focus || heartbeat_due || db_dirty || changed;
-                if push {
-                    write_lines(&mut port, &[line.clone()])?;
-                    focus.note_pushed(&line);
-                    last_focus_heartbeat = Instant::now();
-                    let action = if wake_focus || db_dirty {
-                        "wake"
-                    } else if changed {
-                        "change"
-                    } else {
-                        "heartbeat"
-                    };
-                    if action != "heartbeat" || changed {
-                        log_to_panel(&logs, "focus", action, &line);
-                    }
-                }
-            }
-        }
-
-        if aitokens_enabled {
-            let heartbeat_due =
-                last_aitokens_heartbeat.elapsed() >= Duration::from_secs(AITOKENS_PUSH_INTERVAL_S);
-            if heartbeat_due {
-                let line = aitokens.build_line();
-                let changed = aitokens_line_changed(aitokens.last_pushed_line(), &line);
-                if changed || heartbeat_due {
-                    write_lines(&mut port, &[line.clone()])?;
-                    aitokens.note_pushed(&line);
-                    last_aitokens_heartbeat = Instant::now();
-                    if changed {
-                        log_to_panel(&logs, "aitokens", "change", &line);
-                    }
-                }
-            }
-        }
-
-        if calendar_enabled {
-            let heartbeat_due = last_calendar_heartbeat.elapsed()
-                >= Duration::from_secs(CALENDAR_PUSH_INTERVAL_S);
-            if heartbeat_due {
-                let line = calendar.build_events_line();
-                let changed = calendar_line_changed(calendar.last_pushed_line(), &line);
-                if changed || heartbeat_due {
-                    write_lines(&mut port, &[line.clone()])?;
-                    calendar.note_pushed(&line);
-                    last_calendar_heartbeat = Instant::now();
-                    if changed {
-                        log_to_panel(&logs, "calendar", "change", &line);
-                    }
-                }
-            }
-        }
-
-        if todoist_enabled {
-            let heartbeat_due = last_todoist_heartbeat.elapsed()
-                >= Duration::from_secs(TODOIST_PUSH_INTERVAL_S);
-            if heartbeat_due {
-                let lines = todoist.build_lines();
-                let changed = todoist_line_changed(todoist.last_pushed_line(), &lines);
-                // Always re-send on heartbeat: a panel that missed a bundle (reboot, lost
-                // line) has no other way back to a full list. Repeats are safe — the panel
-                // stages per bundle and only commits on TODOIST_END.
-                write_lines(&mut port, &lines)?;
-                todoist.note_pushed(&lines);
-                last_todoist_heartbeat = Instant::now();
-                if changed {
-                    log_to_panel(
-                        &logs,
-                        "todoist",
-                        "change",
-                        &format!("{} linha(s)", lines.len()),
-                    );
-                }
-            }
-        }
-    }
+    })();
+    set_usb_link(&usb_link, false);
+    result
 }
 
-/// Auto-connect first Tessera port; reconnect on failure (matches legacy Python loop shape).
-pub fn run_auto(
-    profile_paths: ProfilePaths,
-    usb_link: Option<Arc<RwLock<UsbLink>>>,
-    logs: Logs,
-) {
+pub fn run_auto(profile_paths: ProfilePaths, usb_link: Option<Arc<RwLock<UsbLink>>>, logs: Logs) {
     logutil::info(&logs, "usb: aguardando painel no cabo…");
     loop {
         let ports = tessera_usb::list_candidate_ports();
@@ -541,5 +391,31 @@ pub fn run_auto(
                 std::thread::sleep(Duration::from_secs_f64(RETRY_S * 2.0));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod worker_tests {
+    use super::*;
+    #[test]
+    fn slow_provider_does_not_block_music() {
+        let (tx, rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let slow = worker(tx.clone(), move |_| {
+            let _ = release_rx.recv();
+            lines(vec!["slow".into()])
+        });
+        let fast = worker(tx, |_| lines(vec!["music".into()]));
+        slow.send("refresh".into()).unwrap();
+        fast.send("refresh".into()).unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(1)).unwrap().lines,
+            vec!["music"]
+        );
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(1)).unwrap().lines,
+            vec!["slow"]
+        );
     }
 }

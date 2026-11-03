@@ -19,7 +19,7 @@ bool next_field(char **cursor, char *out, size_t out_n) {
     while (*end && *end != '\t' && *end != '\r' && *end != '\n') ++end;
     size_t n = static_cast<size_t>(end - start);
     if (out && out_n) {
-        if (n >= out_n) n = out_n - 1;
+        if (n >= out_n) { n = out_n - 1; while (n > 0 && (static_cast<unsigned char>(start[n]) & 0xC0) == 0x80) --n; }
         memcpy(out, start, n);
         out[n] = '\0';
     }
@@ -52,7 +52,7 @@ bool media::apply_line(View &view, const char *line, uint32_t now_ms) {
     if (!line || strncmp(line, "MEDIA\t", 6) != 0) return false;
     if (strncmp(line, "MEDIA_COVER", 11) == 0) return false;
 
-    char buf[256];
+    char buf[1024];
     strncpy(buf, line, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 
@@ -77,9 +77,14 @@ bool media::apply_line(View &view, const char *line, uint32_t now_ms) {
     next_field(&cursor, next.media.artist, sizeof(next.media.artist));
     next_field(&cursor, next.media.app, sizeof(next.media.app));
 
+    next_field(&cursor, next.media.album, sizeof(next.media.album));
+    next_field(&cursor, next.media.year, sizeof(next.media.year));
+    next_field(&cursor, next.media.cover_key, sizeof(next.media.cover_key));
+
     const bool same_track = eq(view.media.title, next.media.title) &&
                             eq(view.media.artist, next.media.artist) &&
-                            eq(view.media.app, next.media.app);
+                            eq(view.media.app, next.media.app) &&
+                            eq(view.media.cover_key, next.media.cover_key);
     if (same_track) {
         next.cover = keep_cover;
     } else {
@@ -123,6 +128,7 @@ size_t decode_hex(const char *hex, uint8_t *out, size_t out_n) {
 
 bool media::apply_cover_line(View &view, const char *line) {
     if (!line || strncmp(line, "MEDIA_COVER\t", 12) != 0) return false;
+    if (!view.ready || !view.media.ok || view.media.state == MediaState::Stopped) return false;
 
     uint8_t *pixels = cover_pixels();
     if (!pixels) return false;
@@ -157,7 +163,8 @@ bool media::apply_cover_line(View &view, const char *line) {
     next_field(&cursor, field, sizeof(field));
     int idx = atoi(field);
 
-    if (w != kCoverEdge || h != kCoverEdge || chunks <= 0 || idx < 0 || idx >= chunks) return false;
+    if (view.media.cover_key[0] && strcmp(view.media.cover_key, key) != 0) return false;
+    if (w != kCoverEdge || h != kCoverEdge || chunks != (kCoverBytes + 479) / 480 || idx < 0 || idx >= chunks) return false;
 
     if (strcmp(view.cover.key, key) != 0) {
         reset_cover_meta(view.cover, pixels);
@@ -173,8 +180,13 @@ bool media::apply_cover_line(View &view, const char *line) {
     size_t offset = static_cast<size_t>(idx) * kChunkRaw;
     if (offset >= kCoverBytes) return false;
     size_t room = kCoverBytes - offset;
-    size_t wrote = decode_hex(hex, pixels + offset, room);
-    if (!wrote) return false;
+    const size_t expected = room < kChunkRaw ? room : kChunkRaw;
+    if (idx == 0) { view.cover.got = 0; view.cover.ready = false; }
+    if (idx != view.cover.got || strlen(hex) != expected * 2) return false;
+    // Validate before touching pixels; a malformed final chunk cannot complete an image.
+    for (size_t i = 0; i < expected * 2; ++i) if (hex_nibble(hex[i]) < 0) return false;
+    size_t wrote = decode_hex(hex, pixels + offset, expected);
+    if (wrote != expected) return false;
 
     // Count unique chunks simply: mark completion when last index arrives and
     // we've seen chunks times (host sends 0..n-1 in order).

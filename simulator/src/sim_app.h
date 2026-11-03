@@ -7,7 +7,7 @@
 // Host glue: fixtures → real home / settings_panel / todoist_panel / weather_page / aitokens_page / clock_page.
 namespace sim_app {
 
-enum class Screen { Home, Todoist, Weather, Aitokens, Calendar, Clock, Settings };
+enum class Screen { Home, Todoist, Weather, Aitokens, Calendar, Clock, Media, Focus, Settings };
 
 struct State {
     Scenario scenario;
@@ -28,6 +28,7 @@ void destroy(State &app);
 void paint_fixture(State &app);
 
 void on_escape(State &app);
+void ingest_media(State &app, const char *line);
 
 Screen parse_screen(const char *name);
 const char *screen_name(Screen s);

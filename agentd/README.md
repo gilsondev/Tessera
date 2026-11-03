@@ -1,86 +1,46 @@
-# agentd
+# Tessera daemon
 
-Daemon Rust (Agent v2). Coexiste com `agent/` Python até o cutover.
+Rust companion for the Tessera desk display. The installed binary is named **Tessera**, and its LaunchAgent label is `com.tessera.agentd`. The desktop UI is in [`apps/agent-ui`](../apps/agent-ui/).
 
-O binário instalado chama-se **Tessera** (diálogos TCC/FDA do macOS). O crate cargo
-continua `agentd`; o label LaunchAgent é `com.tessera.agentd`.
+Start with [Agent development](../docs/guides/agent-v2-dev.md) for toolchains, build/test/install commands and release instructions.
 
-```bash
-mise run agentd-test
-mise run agentd-run
-```
+## Responsibilities
 
-## SD pack (v2)
+- Detect and connect to the panel over USB CDC.
+- Collect Mac music metadata, native calendars, Focus status, AI quotas and Todoist content.
+- Serve localhost IPC to the desktop UI, including setup, settings, diagnostics and updates.
+- Keep credentials on the Mac and send only selected content snapshots to the panel.
 
-```bash
-mise run agentd-build
-mise run agent-ui-build   # ou SKIP_APP=1 para só o daemon
-./pack_sd.sh              # → dist/sd/tessera/agentd/
-make pack-agentd          # na raiz do monorepo
-```
+Capabilities own independent workers. Network requests, Keychain, AppleScript and artwork decoding must not block serial heartbeats or music updates. Bounded command queues prevent unbounded work when a provider is slow.
 
-Sidecar `agentd.version`; tarball **sem** segredos (`client.json`, tokens, `.env`). Cutover Mac: `tools/cutover_agent_v2.sh`; gate: `tools/agent_v2_gate.md`.
+## Calendar
 
-## Protocol parity
+The source is **Calendar on macOS**, through EventKit. iCloud, Google, Exchange and other accounts configured there are available after native permission. Tessera only reads selected calendars. It does not import accounts, run Google OAuth, or edit events.
 
-USB lines are tab-separated. Golden fixtures under `crates/protocol/tests/fixtures/lines/` were taken from the legacy Python encoders:
+The build embeds a signed helper with Calendar privacy descriptions. An explicit permission action launches **Tessera Calendar** through Launch Services; routine scans never ask for permission. See [Calendar setup](../docs/guides/calendar-setup.md).
 
-- `agent/src/agent/protocol.py` — `AGENT\tv1\t1` (OK handshake; **no** extra semver field; Python adds `\n` only when writing the serial port)
-- `agent/src/agent/capabilities/media/__init__.py` — `MEDIA\tv1\t…` (see `crates/caps-media/README.md` for field order)
+## Music and Focus
 
-With `config.media = true`, the daemon USB loop answers `MEDIA?`, pushes on encoded line change (~2s poll), and sends an 8s heartbeat fallback (`MEDIA_PUSH_INTERVAL_S`).
+Music is informational: no playback commands. `MEDIA\tv1` preserves its legacy prefix and optionally adds trailing `album`, `year` and `cover_key` fields. The current player supplies metadata; Spotify's scripting interface does not supply a release year.
 
-Rust `tessera_protocol::agent_ok_line()` returns the same three fields as `agent_hello(ok=True)` before transport newline. Task 1 briefly added a fourth version field; that was removed here to match Python for cutover.
+Artwork is converted to 200×200 RGB565, cached, chunked and bound to the track key. The firmware acknowledges complete reception with `MEDIA_COVER_OK\t<key>`; missing acknowledgment triggers retry. Old-track and incomplete transfers must never become a complete image.
 
-### CALENDAR wire
+Focus is observational: the daemon reads actual Mac state. Unsupported private database writes and optimistic success states have been removed. Change Focus in macOS Control Center.
 
-Calendar tokens remain only on the Mac under `~/.tessera/calendar/`; none are
-sent over USB. With `config.calendar = true`, agentd answers:
+## AI usage
 
-- `CALENDAR?` → `CALENDAR\tv1\t1\tlinked` followed by
-  `CALENDAR_CATALOG\tv1\t…`
-- `CALENDAR_CATALOG?` → catalog/status line
-- `CALENDAR_SEL\tid…` → persists the selected IDs locally, then returns a
-  snapshot and catalog status
-- `CALENDAR_AUTH?` → `CALENDAR_AUTH\tv1\t0\t…`
+Local credentials resolve the enabled providers. Cursor and Codex use live usage requests; Claude reads a fresh local usage cache. Transient failures retain the last verified values for up to six hours in process memory, then become unavailable rather than fabricated percentages.
 
-The initial Rust port encodes full event snapshots and safely reports missing
-`client.json`, but does not yet open the OAuth browser or fetch Google events.
-Without `~/.tessera/calendar/client.json`, it returns `falta client.json` /
-`configure client.json`; USB requests never fail the session.
+## Protocol and IPC
 
-### AITOKENS caveats
+USB payloads are tab-separated lines; encoders exclude the transport newline. Legacy golden fixtures protect compatible prefixes. They are historical fixtures and do not require the retired Python runtime.
 
-`CursorResolver` contributes an explicit unavailable source when it finds local authentication but the Rust daemon has no live quota client; it never emits a fabricated percentage. Claude currently reads one fresh status/cache value, so Python's future multi-surface display format (`a · b`) is not yet reproduced.
+The UI talks to `127.0.0.1:19792` (override: `TESSERA_AGENTD_IPC_PORT`). Allowed browser origins are limited to Tauri and local development on port 1420. See the [full IPC contract](../apps/agent-ui/IPC.md).
 
-Refresh fixtures from Python (optional):
-
-```bash
-python3 tools/agent_capture_golden.py
-```
-
-Golden lines: `crates/protocol/tests/fixtures/`.
-
-## Localhost IPC
-
-Companion UI reads daemon state over HTTP on **127.0.0.1 only** (not exposed on LAN).
-
-| Env | Default |
-|-----|---------|
-| `TESSERA_AGENTD_IPC_PORT` | `19792` |
-
-| Method | Path | Response |
-|--------|------|----------|
-| GET | `/v1/status` | `{ "ok", "version", "usb", "setup_completed", "machine": { "id", "display_name" } }` |
-| GET | `/v1/health` | `{ "ok": true }` |
-| POST | `/v1/scan` | Varredura local; persiste `scan.json` e atualiza `config.toml` (body opcional: `setup_completed`, `display_name`, `found[]`) |
-| GET | `/v1/scan/last` | Último `scan.json` |
-| GET | `/v1/machines` | `{ "machines": [{ "machine_id", "display_name", "this_machine" }] }` |
-
-Example:
-
-```bash
+```sh
 curl -s http://127.0.0.1:19792/v1/status
 ```
 
-Without `--once` / `--print-agent-line`, `agentd` starts this server and keeps running until interrupted.
+## Offline distribution
+
+`make pack-agentd` builds a fallback SD/portal package with the daemon and app. Packages must not contain credentials, tokens, `.env` or local configuration. The normal installation path is the public site's complete companion installer.

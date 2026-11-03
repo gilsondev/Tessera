@@ -1,0 +1,19 @@
+# Real pointer input through LVGL, not calls to navigation functions.
+expect-screen home
+expect-text Clima
+tap 236 150
+expect-screen weather
+expect-text São Paulo
+snapshot journey-weather.bmp
+tap 32 28
+expect-screen home
+tap 80 150
+expect-screen todoist
+expect-text Hoje
+drag 240 340 240 160
+expect-screen todoist
+tap 32 28
+expect-screen home
+tap 288 28
+expect-screen settings
+snapshot journey-settings.bmp

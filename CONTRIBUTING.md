@@ -44,4 +44,10 @@ attribution-worthy dependencies.
 
 ## Questions
 
-Open an issue (when the public tracker exists) or discuss with the maintainer. Agent-oriented notes: [`AGENTS.md`](AGENTS.md).
+Open a [GitHub issue](https://github.com/gilsondev/Tessera/issues) or discuss with the maintainer. Agent-oriented notes: [`AGENTS.md`](AGENTS.md).
+
+## Choose a verification scope
+
+Firmware changes require native tests and simulator journeys. Agent changes also require `cargo test --workspace` in `agentd/`. UI/site changes require the browser journeys in [testing](docs/guides/testing.md), at desktop and narrow widths. State which checks used mocks and which used a physical panel or a real provider account.
+
+Use synthetic tasks and events in screenshots. Read the [asset policy](docs/guides/repository-assets.md) before adding media. First contributions can focus on docs, fixture scenarios or individual widgets; no owner-specific sibling checkout is required.

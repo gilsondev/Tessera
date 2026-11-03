@@ -18,7 +18,7 @@ pub fn encode_cover_chunks(key: &str, w: u32, h: u32, rgb565_le: &[u8]) -> Vec<S
 }
 
 pub fn cover_key(info: &MediaInfo) -> String {
-    let raw = format!("{}|{}|{}", info.app, info.title, info.artist);
+    let raw = format!("{}|{}|{}|{}", info.app, info.title, info.artist, info.album);
     let mut h: u64 = 0xcbf29ce484222325;
     for b in raw.bytes() {
         h ^= b as u64;
@@ -54,9 +54,9 @@ pub fn fetch_cover_bytes(info: &MediaInfo) -> Option<Vec<u8>> {
     }
     let app = info.app.to_ascii_lowercase();
     if app.contains("spotify") {
-        fetch_spotify_artwork()
+        fetch_spotify_artwork(&info.artwork_url)
     } else if app.contains("music") {
-        fetch_music_artwork()
+        fetch_music_artwork(info)
     } else {
         None
     }
@@ -68,32 +68,15 @@ pub fn fetch_cover_bytes(_info: &MediaInfo) -> Option<Vec<u8>> {
 }
 
 #[cfg(target_os = "macos")]
-fn fetch_spotify_artwork() -> Option<Vec<u8>> {
-    let script = r#"
-    try
-      if application "Spotify" is running then
-        tell application "Spotify"
-          if player state is not stopped then
-            return artwork url of current track
-          end if
-        end tell
-      end if
-    end try
-    return ""
-    "#;
-    let out = std::process::Command::new("osascript")
-        .args(["-e", script])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
+fn fetch_spotify_artwork(url: &str) -> Option<Vec<u8>> {
     if url.is_empty() || !url.starts_with("http") {
         return None;
     }
     use std::io::Read;
-    let resp = ureq::get(&url).call().ok()?;
+    let resp = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(4))
+        .call()
+        .ok()?;
     let mut buf = Vec::new();
     resp.into_reader()
         .take(2_000_000)
@@ -107,15 +90,18 @@ fn fetch_spotify_artwork() -> Option<Vec<u8>> {
 }
 
 #[cfg(target_os = "macos")]
-fn fetch_music_artwork() -> Option<Vec<u8>> {
-    let path = std::env::temp_dir().join("tessera-cover.img");
+fn fetch_music_artwork(info: &MediaInfo) -> Option<Vec<u8>> {
+    let path = std::env::temp_dir().join(format!("tessera-cover-{}.img", std::process::id()));
     let path_s = path.to_string_lossy().replace('\\', "\\\\");
+    let title = info.title.replace('\\', "\\\\").replace('"', "\\\"");
+    let album = info.album.replace('\\', "\\\\").replace('"', "\\\"");
     let script = format!(
         r#"
     try
       if application "Music" is running then
         tell application "Music"
           if player state is not stopped then
+            if name of current track is not "{title}" or album of current track is not "{album}" then return ""
             set a to artwork 1 of current track
             set raw to raw data of a
             set f to open for access POSIX file "{path_s}" with write permission
@@ -141,7 +127,9 @@ fn fetch_music_artwork() -> Option<Vec<u8>> {
     if !ok.contains("ok") {
         return None;
     }
-    std::fs::read(&path).ok().filter(|b| !b.is_empty())
+    let bytes = std::fs::read(&path).ok().filter(|b| !b.is_empty());
+    let _ = std::fs::remove_file(path);
+    bytes
 }
 
 #[cfg(test)]

@@ -43,7 +43,7 @@ jobs:
 
       - name: Build Tessera.app
         working-directory: apps/agent-ui
-        run: npm install && npm run tauri build
+        run: npm ci && npm run tauri build
 
       - name: Package smoke (agentd.tgz)
         run: |

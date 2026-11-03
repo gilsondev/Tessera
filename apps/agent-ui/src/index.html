@@ -9,11 +9,6 @@
   </head>
   <body>
 <main class="window" role="application">
-      <div class="titlebar">
-        <div class="dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <strong id="win-title">Início</strong>
-        <span></span>
-      </div>
       <header class="chrome" aria-label="Tessera">
         <div class="brand">
           <img src="assets/tessera-mark.png" width="28" height="28" alt="" />
@@ -28,18 +23,17 @@
         <button type="button" data-go="home">Início</button>
         <button type="button" data-go="panel">Painel</button>
         <button type="button" data-go="widgets">Widgets</button>
-        <button type="button" data-go="mac">No Mac</button>
-        <button type="button" data-go="machines">PCs</button>
-        <button type="button" data-go="activity">Atividade</button>
-        <button type="button" data-go="more">Mais</button>
+        <button type="button" data-go="mac">Integrações</button>
+        <button type="button" data-go="more">Ajuda e app</button>
       </nav>
+      <div class="save-status" id="save-status" role="status" aria-live="polite" hidden></div>
       <div class="body">
 
         <!-- HOME -->
         <div class="screen" data-screen="home">
           <div class="hero">
             <h2 data-live="home-greeting">Olá</h2>
-            <p data-live="home-greeting-sub">Este Mac manda no painel enquanto o cabo estiver ligado.</p>
+            <p data-live="home-greeting-sub">Seu painel acompanha este Mac pelo cabo USB.</p>
           </div>
           <div class="banner warn" data-live="home-status-banner" hidden>
             <span class="dot" aria-hidden="true"></span>
@@ -61,7 +55,7 @@
                 <h3 data-live="home-machine-name">…</h3>
                 <p class="sub" data-live="home-machine-sub">Perfil deste Mac</p>
               </div>
-              <div class="meta"><button class="btn ghost" type="button" data-go="machines">Computadores</button></div>
+              <div class="meta"><button class="btn ghost" type="button" data-action="edit-machine-name">Editar nome</button></div>
             </div>
           </div>
           <div class="grid two">
@@ -77,7 +71,7 @@
             <div class="card">
               <div class="row">
                 <div class="copy">
-                  <h3>Focus</h3>
+                  <h3>Foco do Mac</h3>
                   <p class="sub" data-live="home-focus-sub">Checando…</p>
                 </div>
                 <div class="meta"><span class="pill neutral" data-live="home-focus-pill"><i></i> —</span></div>
@@ -87,10 +81,10 @@
           <div class="quick">
             <button type="button" data-go="panel">
               <b>Ajustar o painel</b>
-              <span>Brilho, sono, som…</span>
+              <span>Brilho, aparência e descanso</span>
             </button>
             <button type="button" data-go="doctor">
-              <b>Doctor</b>
+              <b>Diagnóstico</b>
               <span>O que precisa de você</span>
             </button>
             <button type="button" data-go="scan">
@@ -106,9 +100,10 @@
           <div class="hero">
             <p class="eyebrow">Neste Mac · 3 de 4</p>
             <h2>Faltam autorizações do Mac</h2>
-            <p>Cada botão abre a tela certa. O Tessera já deve aparecer na lista — você só liga o interruptor.</p>
+            <p>Autorize apenas as integrações que escolheu. Se uma permissão não estiver disponível, você pode continuar e resolver depois.</p>
           </div>
           <ul class="steps" data-live="setup-steps"></ul>
+          <div class="card"><h3>Agenda do Mac (opcional)</h3><p class="sub">Permita Calendários e escolha os que deseja acompanhar. Você pode fazer isso depois em Integrações.</p><div class="actions"><button class="btn ghost" type="button" data-go="calendar">Escolher calendários</button></div></div>
           <p class="note" data-live="setup-hint" hidden></p>
           <div class="actions">
             <button class="btn primary" type="button" data-action="recheck-permissions">Já autorizei — conferir</button>
@@ -121,19 +116,20 @@
           <div class="hero">
             <p class="eyebrow">Neste Mac · 4 de 4</p>
             <h2>Ligue o painel neste Mac</h2>
-            <p>Use o cabo USB. Quem estiver plugado vira o Mac ativo — o outro fica pronto para a próxima vez.</p>
+            <p>Use um cabo USB de dados. Música, foco e cotas chegam por ele; ajustes do painel também precisam de Wi‑Fi.</p>
           </div>
           <div class="card">
             <div class="row">
               <div class="copy">
-                <h3>Procurando o painel…</h3>
+                <h3 data-live="cable-title">Procurando o painel…</h3>
                 <p class="sub">Deixe o cabo bem encaixado. Pode levar alguns segundos.</p>
               </div>
-              <div class="meta"><span class="pill warn"><i></i> Aguardando</span></div>
+              <div class="meta"><span class="pill warn" data-live="cable-state"><i></i> Aguardando USB</span></div>
             </div>
           </div>
           <div class="actions">
-            <button class="btn primary" type="button" data-go="home">Simular “encontrei”</button>
+            <button class="btn primary" type="button" data-action="finish-setup" disabled>Concluir configuração</button>
+            <button class="btn ghost" type="button" data-action="finish-later">Conectar depois</button>
             <button class="btn ghost" type="button" data-go="setup">Voltar</button>
           </div>
           <p class="note">Se não achar: troque a porta USB, evite hub sem energia, ou toque em “Ver atividade”.</p>
@@ -218,17 +214,28 @@
           <p class="note">USB sincroniza música, Focus e cotas. Ocultar exige painel na rede (e Tessera com acesso à rede local).</p>
         </div>
 
+        <section class="screen" data-screen="calendar" aria-label="Calendários do Mac">
+          <div class="hero"><p class="eyebrow">Integrações · Calendários do Mac</p><h2>Sua agenda no painel</h2><p>Use os calendários que já aparecem no app Calendário do Mac: iCloud, Google, Exchange e outras contas. Sem importar contas ou senhas.</p></div>
+          <div id="calendar-client-step" hidden></div>
+          <div class="card" id="calendar-permission"><h3>1. Permita a leitura no Mac</h3><p class="sub">O macOS pede acesso a Calendários para Tessera Calendar. O sistema chama essa permissão de acesso completo; o Tessera só lê eventos e nunca altera sua agenda.</p>
+            <div class="actions"><button class="btn primary" type="button" data-action="calendar-connect" disabled>Permitir Calendários</button><button class="btn ghost" type="button" data-open-settings="calendar" data-calendar-settings hidden>Abrir Ajustes de Calendários</button></div>
+            <p data-live="calendar-status" role="status" aria-live="polite">Verificando configuração…</p>
+          </div>
+          <div class="card"><h3>2. Escolha os calendários</h3><p class="sub">A seleção é salva automaticamente neste Mac e enviada ao painel quando a USB estiver conectada.</p><div data-live="calendar-choices"></div></div>
+          <p class="note">Não encontrou uma conta? Adicione-a em Calendário → Ajustes → Contas no Mac. Se negou o acesso, abra Ajustes do Sistema → Privacidade e Segurança → Calendários e permita Tessera Calendar.</p><div class="actions"><button class="btn ghost" type="button" data-action="calendar-back">Voltar</button></div>
+        </section>
+
         <!-- WIDGETS (enabled only) -->
         <div class="screen" data-screen="widgets" data-widget-page="">
           <div class="hero">
             <h2>Widgets</h2>
-            <p>Configuração dos widgets ativos na home. Ative ou oculte na aba Painel.</p>
+            <p>Escolha o conteúdo e a aparência de cada widget. Para mostrar ou ocultar widgets, abra Painel.</p>
           </div>
           <div class="banner warn" data-live="widgets-offline-banner" hidden>
             <span class="dot" aria-hidden="true"></span>
             <div class="copy">
               <b>Painel offline</b>
-              <span>Ligue o cabo ou a rede (tessera.local) para carregar e salvar ajustes.</span>
+              <span>Conecte o painel ao mesmo Wi‑Fi para carregar e salvar seus ajustes. O cabo USB sincroniza as integrações do Mac.</span>
             </div>
           </div>
           <div class="banner warn" data-live="widgets-empty-banner" hidden>
@@ -317,18 +324,18 @@
               <div class="widget-page" data-widget-page-id="org.tessera.aitokens">
                 <div class="card">
                   <h3>AI Tokens</h3>
-                  <p class="sub">Quais fontes e em que ordem no painel. Ligar/desligar cotas também sincroniza com No Mac.</p>
+                  <p class="sub">Quais fontes e em que ordem no painel. Ligar/desligar cotas também sincroniza com Integrações.</p>
                   <div class="cap">
                     <div class="copy"><h3>Codex</h3></div>
-                    <button class="toggle" type="button" aria-pressed="false" data-panel-ai="show_aitokens_codex"></button>
+                    <button class="toggle" type="button" aria-pressed="false" aria-label="Mostrar Codex no painel" data-panel-ai="show_aitokens_codex"></button>
                   </div>
                   <div class="cap">
                     <div class="copy"><h3>Claude</h3></div>
-                    <button class="toggle" type="button" aria-pressed="false" data-panel-ai="show_aitokens_claude"></button>
+                    <button class="toggle" type="button" aria-pressed="false" aria-label="Mostrar Claude no painel" data-panel-ai="show_aitokens_claude"></button>
                   </div>
                   <div class="cap">
                     <div class="copy"><h3>Cursor</h3></div>
-                    <button class="toggle" type="button" aria-pressed="false" data-panel-ai="show_aitokens_cursor"></button>
+                    <button class="toggle" type="button" aria-pressed="false" aria-label="Mostrar Cursor no painel" data-panel-ai="show_aitokens_cursor"></button>
                   </div>
                   <div class="field">
                     <h4>Ordem dos cards</h4>
@@ -341,9 +348,9 @@
               <div class="widget-page" data-widget-page-id="org.tessera.calendar">
                 <div class="card">
                   <h3>Agenda</h3>
-                  <p class="sub" data-live="widgets-calendar-note">Contas Google via USB. Somente leitura.</p>
+                  <p class="sub" data-live="widgets-calendar-note">Calendários do Mac via USB. Somente leitura.</p>
                   <div class="actions" style="margin-bottom:12px">
-                    <button class="btn primary" type="button" data-action="calendar-add-account">Adicionar conta</button>
+                    <button class="btn primary" type="button" data-go="calendar">Configurar Calendários do Mac</button>
                   </div>
                   <div data-live="widgets-calendar-list"></div>
                   <div class="field">
@@ -356,7 +363,7 @@
                       <button type="button" data-tile-value="XL">XL</button>
                     </div>
                   </div>
-                  <p class="note">Desmarcar todos os calendários de uma conta esconde os eventos dela. Remover OAuth completo ainda é no browser do Mac na autorização.</p>
+                  <p class="note">Desmarcar um calendário remove seus eventos do painel. Contas são gerenciadas no app Calendário do Mac.</p>
                 </div>
               </div>
               <div class="widget-page" data-widget-page-id="org.tessera.media">
@@ -365,17 +372,17 @@
                   <p class="sub" data-live="widgets-media-status">Agora tocando via Spotify / Apple Music.</p>
                   <p class="note">Não há ajuste de aparência neste widget — só a coleta neste Mac.</p>
                   <div class="actions">
-                    <button class="btn ghost" type="button" data-go="mac">Abrir coleta No Mac</button>
+                    <button class="btn ghost" type="button" data-go="mac">Abrir coleta Integrações</button>
                   </div>
                 </div>
               </div>
               <div class="widget-page" data-widget-page-id="org.tessera.mac">
                 <div class="card">
-                  <h3>Focus</h3>
-                  <p class="sub" data-live="widgets-focus-status">Modo de concentração do macOS.</p>
-                  <p class="note">Sem opções de layout — a coleta é ligada na aba No Mac.</p>
+                  <h3>Foco do Mac</h3>
+                  <p class="sub" data-live="widgets-focus-status">Foco atual do Mac, atualizado automaticamente.</p>
+                  <p class="note">Somente leitura. Altere seu foco na Central de Controle do Mac.</p>
                   <div class="actions">
-                    <button class="btn ghost" type="button" data-go="mac">Abrir coleta No Mac</button>
+                    <button class="btn ghost" type="button" data-go="mac">Abrir coleta Integrações</button>
                   </div>
                 </div>
               </div>
@@ -386,9 +393,9 @@
         <!-- NO MAC (coleta neste computador) -->
         <div class="screen" data-screen="mac">
           <div class="hero">
-            <h2>No Mac</h2>
+            <h2>Integrações</h2>
             <p>O que este computador coleta e envia ao painel via USB.</p>
-          </div>
+          </div><div class="card"><div class="row"><div class="copy"><h3>Calendários do Mac</h3><p class="sub">Escolha entre os calendários já adicionados ao Mac, mesmo sem o painel.</p></div><button class="btn primary" type="button" data-go="calendar">Configurar Agenda</button></div></div>
           <div class="grid" data-live="mac-caps">
             <div class="card">
               <div class="cap">
@@ -396,25 +403,25 @@
                   <h3>Música</h3>
                   <p class="sub" data-live="mac-media-sub">Spotify ou Apple Music</p>
                 </div>
-                <button class="toggle" type="button" aria-pressed="false" data-cap-toggle="media"></button>
+                <button class="toggle" type="button" aria-pressed="false" aria-label="Coletar música neste Mac" data-cap-toggle="media"></button>
               </div>
             </div>
             <div class="card">
               <div class="cap">
                 <div class="copy">
-                  <h3>Focus</h3>
+                  <h3>Foco do Mac</h3>
                   <p class="sub" data-live="mac-focus-sub">Modo de concentração do macOS</p>
                 </div>
-                <button class="toggle" type="button" aria-pressed="false" data-cap-toggle="focus"></button>
+                <button class="toggle" type="button" aria-pressed="false" aria-label="Acompanhar foco neste Mac" data-cap-toggle="focus"></button>
               </div>
             </div>
             <div class="card">
               <div class="cap">
                 <div class="copy">
                   <h3>Agenda</h3>
-                  <p class="sub" data-live="mac-calendar-sub">Próximos eventos (Google Calendar)</p>
+                  <p class="sub" data-live="mac-calendar-sub">Próximos eventos (Calendários do Mac)</p>
                 </div>
-                <button class="toggle" type="button" aria-pressed="false" data-cap-toggle="calendar"></button>
+                <button class="toggle" type="button" aria-pressed="false" aria-label="Ler calendários neste Mac" data-cap-toggle="calendar"></button>
               </div>
             </div>
             <div class="card">
@@ -425,21 +432,21 @@
                   <h3>Cursor</h3>
                   <p class="sub" data-live="mac-cursor-sub">Cotas Cursor</p>
                 </div>
-                <button class="toggle" type="button" aria-pressed="false" data-cap-toggle="cursor"></button>
+                <button class="toggle" type="button" aria-pressed="false" aria-label="Coletar cotas do Cursor" data-cap-toggle="cursor"></button>
               </div>
               <div class="cap">
                 <div class="copy">
                   <h3>Claude</h3>
                   <p class="sub" data-live="mac-claude-sub">Cotas Claude</p>
                 </div>
-                <button class="toggle" type="button" aria-pressed="false" data-cap-toggle="claude"></button>
+                <button class="toggle" type="button" aria-pressed="false" aria-label="Coletar cotas do Claude" data-cap-toggle="claude"></button>
               </div>
               <div class="cap">
                 <div class="copy">
                   <h3>Codex</h3>
                   <p class="sub" data-live="mac-codex-sub">Cotas Codex / ChatGPT</p>
                 </div>
-                <button class="toggle" type="button" aria-pressed="false" data-cap-toggle="codex"></button>
+                <button class="toggle" type="button" aria-pressed="false" aria-label="Coletar cotas do Codex" data-cap-toggle="codex"></button>
               </div>
             </div>
           </div>
@@ -464,7 +471,7 @@
           </ul>
           <pre class="log adv-only" data-live="activity-log" aria-label="Log técnico"></pre>
           <div class="actions">
-            <button class="btn ghost" type="button" data-go="doctor">Abrir Doctor</button>
+            <button class="btn ghost" type="button" data-go="doctor">Abrir Diagnóstico</button>
             <button class="btn ghost adv-only" type="button" data-action="copy-log">Copiar log</button>
           </div>
         </div>
@@ -472,7 +479,7 @@
         <!-- DOCTOR -->
         <div class="screen" data-screen="doctor">
           <div class="hero">
-            <h2>Doctor <span class="demo-badge" data-live="doctor-demo-badge" hidden>demo</span></h2>
+            <h2>Diagnóstico <span class="demo-badge" data-live="doctor-demo-badge" hidden>demo</span></h2>
             <p>Cabo, autorizações e o que sincroniza — o que está ok e o que só você resolve.</p>
           </div>
           <div class="banner warn" data-live="doctor-status-banner">
@@ -494,7 +501,7 @@
         <!-- MORE -->
         <div class="screen" data-screen="more">
           <div class="hero">
-            <h2>Mais</h2>
+            <h2>Ajuda e aplicativo</h2>
             <p>Atualização, perfis e remoção deste Mac.</p>
           </div>
           <div class="grid">
@@ -509,7 +516,7 @@
                     class="toggle on"
                     type="button"
                     aria-pressed="true"
-                    data-update-auto="1"
+                    aria-label="Atualizar o Agente automaticamente" data-update-auto="1"
                     aria-label="Atualizar sozinho"
                   ></button>
                 </div>
@@ -535,7 +542,7 @@
               </div>
               <div class="row">
                 <div class="copy">
-                  <h3>Doctor</h3>
+                  <h3>Diagnóstico</h3>
                   <p class="sub">O que funciona e o que precisa de você</p>
                 </div>
                 <div class="meta"><button class="btn ghost" type="button" data-go="doctor">Rodar</button></div>
@@ -550,24 +557,18 @@
               <div class="row">
                 <div class="copy">
                   <h3>Autorizações</h3>
-                  <p class="sub">Acesso a arquivos e atalhos</p>
+                  <p class="sub">Permissões e conexão com o painel</p>
                 </div>
-                <div class="meta"><button class="btn ghost" type="button" data-go="setup">Abrir</button></div>
+                <div class="meta"><button class="btn ghost" type="button" data-go="doctor">Ver diagnóstico</button></div>
               </div>
               <div class="row">
                 <div class="copy">
-                  <h3>Abrir site do Tessera</h3>
+                  <h3>Portal do painel</h3>
                   <p class="sub">Wi‑Fi, clima, Todoist e widgets</p>
                 </div>
-                <div class="meta"><button class="btn ghost" type="button">Abrir</button></div>
+                <div class="meta"><a class="btn ghost" href="http://tessera.local" target="_blank" rel="noopener">Abrir portal</a></div>
               </div>
-              <div class="row">
-                <div class="copy">
-                  <h3>Remover deste Mac</h3>
-                  <p class="sub">Não apaga o perfil dos outros computadores</p>
-                </div>
-                <div class="meta"><button class="btn danger" type="button">Remover…</button></div>
-              </div>
+
             </div>
           </div>
         </div>
@@ -592,7 +593,7 @@
           </div>
           <div class="actions">
             <button class="btn primary" type="button">Tentar de novo</button>
-            <button class="btn ghost" type="button" data-go="doctor">Rodar Doctor</button>
+            <button class="btn ghost" type="button" data-go="doctor">Rodar Diagnóstico</button>
             <button class="btn ghost" type="button" data-go="activity" data-mode-open="advanced">Ver log</button>
             <button class="btn ghost" type="button" data-go="home">Dispensar</button>
           </div>
@@ -602,7 +603,7 @@
         <div class="screen" data-screen="machines">
           <div class="hero">
             <h2>Computadores</h2>
-            <p>Perfis do companion neste e em outros Macs (não é o inventário do painel). O cabo USB define quem manda agora.</p>
+            <p>Perfil deste Mac. Em outro computador, instale o Agente e configure suas integrações separadamente.</p>
           </div>
           <div class="grid" data-live="machines-list">
             <div class="card">
@@ -635,7 +636,7 @@
             </div>
           </div>
           <div class="actions">
-            <button class="btn primary" type="button" data-go="scan-result">Mostrar resultado</button>
+            <p class="note" data-live="scan-error" role="status"></p>
             <button class="btn ghost" type="button" data-go="home">Cancelar</button>
           </div>
         </div>
@@ -672,7 +673,7 @@
           </div>
           <div class="actions">
             <button class="btn primary" type="button" data-action="scan-continue-setup">Resolver autorizações</button>
-            <button class="btn ghost" type="button" data-action="scan-save-home">Salvar no perfil e usar</button>
+            <button class="btn ghost" type="button" data-action="scan-save-home">Salvar e conectar depois</button>
           </div>
         </div>
 
@@ -680,8 +681,8 @@
         <div class="screen on" data-screen="welcome">
           <div class="hero">
             <p class="eyebrow">Bem-vindo</p>
-            <h2>Um painel. Os Macs que você usa.</h2>
-            <p>Na primeira abertura criamos o perfil deste computador, varremos o que há nele e pedimos só o que faltar autorizar.</p>
+            <h2>Seu Mac, à vista no Tessera.</h2>
+            <p>Escolha o que acompanhar, autorize as integrações e conecte o painel. Você pode mudar tudo depois.</p>
           </div>
           <div class="grid two">
             <div class="card">
@@ -689,13 +690,13 @@
               <p class="sub">Descobre apps e o que falta autorizar — e grava no perfil.</p>
             </div>
             <div class="card">
-              <h3>Vários computadores</h3>
-              <p class="sub">Cada Mac tem o próprio perfil. O cabo define quem está ativo.</p>
+              <h3>Você escolhe</h3>
+              <p class="sub">Integrações opcionais. Credenciais ficam neste Mac; o painel recebe apenas o conteúdo escolhido.</p>
             </div>
           </div>
           <div class="actions">
             <button class="btn primary" type="button" data-go="scan">Começar neste Mac</button>
-            <button class="btn ghost" type="button" data-go="machines">Ver computadores</button>
+
           </div>
         </div>
 

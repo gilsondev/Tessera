@@ -2,7 +2,13 @@
 
 **Default language: English.** Portuguese alternatives: [`pt/`](pt/).
 
-## Start here
+## Use the product
+
+- [Device and Agent setup](guides/device-setup.md)
+- [Google Calendar setup](guides/calendar-setup.md)
+- [Where to change settings](guides/settings-surfaces.md)
+
+## Contribute
 
 | Doc | Audience |
 |---|---|
@@ -28,3 +34,11 @@
 ## Agents
 
 Harness summary for coding agents: [`../AGENTS.md`](../AGENTS.md).
+
+## Verification and maintenance
+
+- [Product journey decisions](guides/product-consolidation.md)
+- [Automated user journeys](guides/testing.md)
+- [Repository asset policy](guides/repository-assets.md)
+
+Dated files under `superpowers/` are design history, not a live task board. Confirm current behavior in code, tests and the guides above before treating an unchecked historical plan as missing work.

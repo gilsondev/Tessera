@@ -29,13 +29,11 @@ AITOKENS	v1	1	codex	1	pct	72	72% · 91%	14:30	claude	0	none	0	—		cursor	1	pct	
 
 - **Cursor:** resolves credentials in legacy order: Cursor `state.vscdb`,
   macOS Keychain, Cursor `auth.json`, then `CURSOR_API_KEY` / `CURSOR_TOKEN`.
-  Live refresh and Cursor usage API are not yet ported, so a discovered
-  credential remains unavailable rather than reporting a made-up quota.
+  Fetches live usage and refreshes credentials when supported; failed requests retain last-good values for up to six hours.
 - **Claude:** reads fresh `~/.tessera/claude_status.json` (and a compatible
   `claude_usage_cache.json`) emitted by the existing Claude Code/Desktop
   bridge.
-- **Codex:** detects `~/.codex/auth.json`; the ChatGPT WHAM usage client is
-  pending, therefore it remains unavailable until a live response is parsed.
+- **Codex:** reads `~/.codex/auth.json` and fetches live usage; missing/invalid access is reported as unavailable.
 
 When `config.aitokens = true`, `agentd` answers `AITOKENS?` and pushes a
 snapshot every 30 seconds.

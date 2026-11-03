@@ -2,7 +2,7 @@
 
 HTTP on `127.0.0.1` only. Port: `TESSERA_AGENTD_IPC_PORT` (default **19792**), overridable in dev via `VITE_AGENTD_PORT`.
 
-If agentd is offline or a route is missing, the UI falls back to embedded fixtures and shows a **demo** badge.
+If agentd is offline or a route is missing, the UI shows an unavailable state. Production screens never substitute demonstration data.
 
 **Profile rule:** machine name, scan findings and capability toggles come from `~/.tessera/` via IPC. The UI must not invent roles (“Mac do trabalho”, etc.) — a clean install starts with `setup_completed=false` and fills the profile during welcome → scan → permissions.
 
@@ -28,3 +28,11 @@ If agentd is offline or a route is missing, the UI falls back to embedded fixtur
 - **`/v1/logs`**: Plain log lines; activity **Avançado** renders them in the technical log panel. Default `tail=200`.
 
 Client helpers live in `src/ipc.js`.
+
+## Native Calendars
+
+- `GET /v1/calendar`: native `permission`, `pending`, `message`, `linked` and `calendars[]` (id, name, account/source, color, selected).
+- `POST /v1/calendar/connect`: explicit request for EventKit permission. No OAuth or account import.
+- `POST /v1/calendar/selection`: JSON array of local calendar IDs. Validates against the Mac's catalog and saves locally, without requiring the device.
+
+CORS allows the Tauri origins and local development on port 1420; arbitrary websites cannot read or mutate companion state through cross-origin JSON requests.

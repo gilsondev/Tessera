@@ -6,7 +6,7 @@ English is canonical. Product north-star specs may also live in a sibling Terrar
 
 ```text
 ┌─────────────────────────────────────────────────────────┐
-│  web/ portal  ·  agent/ (Mac USB)                        │
+│  web/ portal  ·  agentd/ (Mac USB)                        │
 ├─────────────────────────────────────────────────────────┤
 │  dashboard_shell — slots, nav, theme, status (no product)│
 ├─────────────────────────────────────────────────────────┤
@@ -74,3 +74,9 @@ on_open_widget(id):
 - Templates: **clock** and **weather**. Todoist is a mutable reference widget, **not** MVP acceptance
 
 Step-by-step: [`widget-authoring.md`](widget-authoring.md)
+
+## Companion concurrency
+
+Each capability runs on its own worker. USB owns transport, bounded command dispatch and heartbeats; HTTP, token refresh, AppleScript and artwork processing must stay outside the transport loop. Music metadata is delivered before artwork. Artwork includes a track identity and is only acknowledged after complete, contiguous reception; stale-track data is rejected.
+
+Native macOS Calendar access is owned by `caps-calendar`, using an embedded Swift EventKit helper. Account management stays in macOS; Tessera only reads selected calendars. The companion UI uses local IPC directly, so account setup does not depend on device reachability. Focus observes the actual Mac state; it never edits macOS databases or reports an optimistic selection.

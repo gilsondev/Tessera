@@ -84,12 +84,13 @@ def snapshot(ser, path):
                 header = data[idx:nl].decode()
                 raw = bytearray(data[nl + 1:])
     if not header:
-        print("sem snapshot")
-        return
+        raise RuntimeError("Panel did not return a snapshot header")
     w, h = (int(v) for v in header.split()[1:3])
     need = w * h * 3
     while len(raw) < need and time.time() < end:
         raw += ser.read(65536)
+    if len(raw) < need:
+        raise RuntimeError(f"Incomplete panel snapshot: {len(raw)}/{need} bytes")
     ppm = pathlib.Path(path).with_suffix(".ppm")
     ppm.write_bytes(f"P6\n{w} {h}\n255\n".encode() + bytes(raw[:need]))
     subprocess.run(["sips", "-s", "format", "png", str(ppm), "--out", path], capture_output=True)

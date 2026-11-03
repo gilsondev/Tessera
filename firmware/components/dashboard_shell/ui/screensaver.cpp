@@ -76,7 +76,8 @@ lv_obj_t *flap_top_lab[kMaxDigits] = {};
 lv_obj_t *flap_bot_lab[kMaxDigits] = {};
 lv_obj_t *colon_boxes[2] = {};
 char shown[kMaxDigits + 1] = "------";
-char queued[kMaxDigits] = {};
+uint32_t last_tick_ms = 0;
+screensaver::Timing g_timing{};
 int hour_cache = -1;
 int minute_cache = -1;
 int second_cache = -1;
@@ -117,14 +118,12 @@ void place_bottom_glyph(lv_obj_t *label) { lv_obj_align(label, LV_ALIGN_CENTER, 
 // Pin digit optical center on the seam so foreshortening clips correctly as height changes.
 void pin_glyph_on_seam_above(lv_obj_t *label) {
     if (!label) return;
-    lv_obj_update_layout(label);
-    lv_coord_t h = lv_obj_get_height(label);
+    const lv_coord_t h = lv_font_get_line_height(&theme::display_font());
     lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, h / 2);
 }
 void pin_glyph_on_seam_below(lv_obj_t *label) {
     if (!label) return;
-    lv_obj_update_layout(label);
-    lv_coord_t h = lv_obj_get_height(label);
+    const lv_coord_t h = lv_font_get_line_height(&theme::display_font());
     lv_obj_align(label, LV_ALIGN_TOP_MID, 0, -h / 2);
 }
 
@@ -292,9 +291,6 @@ void finish_digit(int i) {
     flipping[i] = false;
     pending_new[i] = 0;
     pending_old[i] = 0;
-    char next = queued[i];
-    queued[i] = 0;
-    if (next && next != ch) flip_digit(i, next, 0);
 }
 
 void rise_exec(void *obj, int32_t h);
@@ -375,8 +371,11 @@ void flip_digit(int index, char next, uint32_t delay_ms) {
     char cur = shown[index];
     if (cur == next && !flipping[index]) return;
     if (flipping[index]) {
-        // Keep latest target — physical cards also skip intermediate if spun fast.
-        queued[index] = next;
+        // An unfinished flip is stale; never replay it after the wall second.
+        lv_anim_delete(flap_top[index], nullptr);
+        lv_anim_delete(flap_bot[index], nullptr);
+        pending_new[index] = next;
+        finish_digit(index);
         return;
     }
     if (cur == next) return;
@@ -402,7 +401,6 @@ void flip_digit(int index, char next, uint32_t delay_ms) {
     pending_new[index] = next;
     shown[index] = next;
     flipping[index] = true;
-    queued[index] = 0;
 
     reset_flap_top(ft);
     lv_obj_remove_flag(ft, LV_OBJ_FLAG_HIDDEN);
@@ -436,7 +434,9 @@ void set_time_digits(int hour, int minute, int second, bool animate) {
             // because they change alone most of the time.
             flip_digit(i, buf[i], static_cast<uint32_t>(stagger_i) * kStaggerMs);
             ++stagger_i;
-        } else if (!flipping[i]) {
+        } else if (!animate || !flipping[i]) {
+            flipping[i] = false;
+            pending_new[i] = pending_old[i] = 0;
             set_static_digit(i, buf[i]);
             if (flap_top[i]) {
                 lv_anim_delete(flap_top[i], nullptr);
@@ -449,9 +449,6 @@ void set_time_digits(int hour, int minute, int second, bool animate) {
                 lv_obj_add_flag(flap_bot[i], LV_OBJ_FLAG_HIDDEN);
             }
             shown[i] = buf[i];
-            queued[i] = 0;
-        } else if (shown[i] != buf[i]) {
-            queued[i] = buf[i];
         }
     }
     hour_cache = hour;
@@ -477,7 +474,6 @@ void clear_digit_slots() {
         flipping[i] = false;
         pending_new[i] = 0;
         pending_old[i] = 0;
-        queued[i] = 0;
         shown[i] = '-';
     }
     shown[kMaxDigits] = '\0';
@@ -550,7 +546,6 @@ void screensaver::show() {
     read_now(hour, minute, second);
     for (int i = 0; i < metrics.digit_n; ++i) {
         flipping[i] = false;
-        queued[i] = 0;
         if (flap_top[i]) {
             lv_anim_delete(flap_top[i], nullptr);
             reset_flap_top(flap_top[i]);
@@ -568,6 +563,8 @@ void screensaver::show() {
     center_clock();
     lv_screen_load(screen);
     shown_flag = true;
+    last_tick_ms = lv_tick_get();
+    g_timing = {};
 }
 
 void screensaver::hide() { shown_flag = false; }
@@ -575,17 +572,25 @@ void screensaver::hide() { shown_flag = false; }
 bool screensaver::visible() { return shown_flag; }
 
 void screensaver::tick(uint32_t now_ms) {
-    (void)now_ms;
     if (!shown_flag || !screen) return;
+    const uint32_t gap = now_ms - last_tick_ms;
+    last_tick_ms = now_ms;
+    if (gap > g_timing.max_gap_ms) g_timing.max_gap_ms = gap;
     const bool before_secs = built_with_seconds;
     ensure_layout();
     int hour = 0, minute = 0, second = 0;
     read_now(hour, minute, second);
     const bool secs = metrics.digit_n >= 6;
     const bool rebuilt = before_secs != built_with_seconds;
-    // Never drop a second/minute — queue onto digits that are mid-flip.
+    // A delayed UI sample must show current wall time, never catch up old flips.
     if (rebuilt || hour != hour_cache || minute != minute_cache || (secs && second != second_cache)) {
-        set_time_digits(hour, minute, second, !rebuilt);
+        const int previous = hour_cache * 3600 + minute_cache * 60 + (secs ? second_cache : 0);
+        const int current = hour * 3600 + minute * 60 + (secs ? second : 0);
+        const bool sequential = (current - previous + 86400) % 86400 == (secs ? 1 : 60);
+        const bool animate = !rebuilt && gap < 250 && sequential;
+        ++g_timing.changes;
+        if (!animate) ++g_timing.snaps;
+        set_time_digits(hour, minute, second, animate);
     }
 }
 
@@ -614,4 +619,13 @@ void screensaver::debug_flip() {
 void screensaver::apply_theme() {
     if (!screen) return;
     lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+}
+
+screensaver::Timing screensaver::timing() {
+    Timing result = g_timing;
+    for (int i = 0; i < metrics.digit_n; ++i) {
+        if (flipping[i]) ++result.active;
+        result.digits[i] = bottom_labels[i] ? lv_label_get_text(bottom_labels[i])[0] : '-';
+    }
+    return result;
 }

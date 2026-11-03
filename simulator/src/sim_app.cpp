@@ -7,6 +7,8 @@
 #include "sim_detail.h"
 #include "ui/aitokens_page.h"
 #include "ui/clock_page.h"
+#include "ui/media_page.h"
+#include "ui/mac_page.h"
 #include "ui/home.h"
 #include "ui/palette.h"
 #include "ui/settings_panel.h"
@@ -19,6 +21,8 @@
 namespace {
 
 sim_app::State *g_app = nullptr;
+media::View music;
+focus::View focus_view;
 
 DeviceInfo device_info_from(const Scenario &s) {
     DeviceInfo info = {};
@@ -61,6 +65,9 @@ void open_widget(lv_event_t *e) {
     if (!std::strcmp(id, dashboard::id_todoist())) sim_app::show(*g_app, sim_app::Screen::Todoist);
     else if (!std::strcmp(id, dashboard::id_weather())) sim_app::show(*g_app, sim_app::Screen::Weather);
     else if (!std::strcmp(id, dashboard::id_aitokens())) sim_app::show(*g_app, sim_app::Screen::Aitokens);
+    else if (!std::strcmp(id, dashboard::id_calendar())) sim_app::show(*g_app, sim_app::Screen::Calendar);
+    else if (!std::strcmp(id, dashboard::id_media())) sim_app::show(*g_app, sim_app::Screen::Media);
+    else if (!std::strcmp(id, dashboard::id_mac())) sim_app::show(*g_app, sim_app::Screen::Focus);
     else if (!std::strcmp(id, dashboard::id_clock())) sim_app::show(*g_app, sim_app::Screen::Clock);
 }
 
@@ -103,9 +110,10 @@ void fill_compose_flags(sim_app::State &app) {
     const char *registered[] = {
         dashboard::id_greeting(), dashboard::id_date(),    dashboard::id_clock(),
         dashboard::id_todoist(),  dashboard::id_weather(), dashboard::id_aitokens(),
+        dashboard::id_calendar(), dashboard::id_media(), dashboard::id_mac(),
     };
     char slots[dashboard::kMaxSlots][dashboard::kIdLen];
-    int n = dashboard::compose(app.scenario.dashboard, registered, 6, slots, dashboard::kMaxSlots);
+    int n = dashboard::compose(app.scenario.dashboard, registered, 9, slots, dashboard::kMaxSlots);
     app.tile_count = n;
     app.has_todoist = app.has_weather = app.has_aitokens = app.has_clock_tile = false;
     for (int i = 0; i < n; ++i) {
@@ -126,6 +134,8 @@ void sim_app::paint_fixture(State &app) {
     home::set_weather(sim_detail::weather_view(s));
     home::set_aitokens(sim_detail::aitokens_view(s));
     home::set_calendar(sim_detail::calendar_view(s));
+    home::set_media(music, true);
+    home::set_mac(focus_view, true);
 }
 
 void sim_app::init(State &app, const Scenario &scenario) {
@@ -142,6 +152,10 @@ void sim_app::init(State &app, const Scenario &scenario) {
 
     sim_detail::load_todoist_store(app.scenario);
 
+    media::apply_line(music, "MEDIA\tv1\t1\tplaying\tSynthetic song\tExample artist\tMusic\tExample album\t2026\tdemo", 0);
+    focus::apply_line(focus_view, "FOCUS\tv1\t1\twork\tTrabalho\t1\twork\tTrabalho", 0);
+    media_page::begin(go_home, nullptr);
+    mac_page::begin(go_home, nullptr);
     home::begin(open_widget, on_settings);
     // begin() monta a partir de settings; reforça o layout do fixture.
     home::rebuild(app.scenario.dashboard);
@@ -155,6 +169,7 @@ void sim_app::show(State &app, Screen screen) {
         settings_panel::close();
     }
     if (screen == Screen::Home) {
+        media_page::unmount(); mac_page::unmount();
         home::show();
         app.screen = Screen::Home;
         return;
@@ -177,6 +192,10 @@ void sim_app::show(State &app, Screen screen) {
         sim_detail::open_aitokens(app.scenario, go_home);
     } else if (screen == Screen::Calendar) {
         sim_detail::open_calendar(app.scenario, go_home);
+    } else if (screen == Screen::Media) {
+        media_page::show(); media_page::paint(music, true);
+    } else if (screen == Screen::Focus) {
+        mac_page::show(); mac_page::paint(focus_view, true);
     } else if (screen == Screen::Clock) {
         sim_detail::open_clock(app.scenario, go_home);
     }
@@ -205,6 +224,8 @@ void sim_app::on_escape(State &app) {
 
 sim_app::Screen sim_app::parse_screen(const char *name) {
     if (!name) return Screen::Home;
+    if (!std::strcmp(name, "media")) return Screen::Media;
+    if (!std::strcmp(name, "focus")) return Screen::Focus;
     if (!std::strcmp(name, "todoist") || !std::strcmp(name, "tarefas")) return Screen::Todoist;
     if (!std::strcmp(name, "weather") || !std::strcmp(name, "clima")) return Screen::Weather;
     if (!std::strcmp(name, "aitokens") || !std::strcmp(name, "ai")) return Screen::Aitokens;
@@ -218,6 +239,8 @@ sim_app::Screen sim_app::parse_screen(const char *name) {
 
 const char *sim_app::screen_name(Screen s) {
     switch (s) {
+        case Screen::Media: return "media";
+        case Screen::Focus: return "focus";
         case Screen::Todoist:
             return "todoist";
         case Screen::Weather:
@@ -234,4 +257,11 @@ const char *sim_app::screen_name(Screen s) {
         default:
             return "home";
     }
+}
+
+void sim_app::ingest_media(State &app, const char *line) {
+    if (strncmp(line,"MEDIA_COVER\t",12)==0) media::apply_cover_line(music,line);
+    else media::apply_line(music,line,0);
+    home::set_media(music,true);
+    if (app.screen == Screen::Media) media_page::paint(music,true);
 }

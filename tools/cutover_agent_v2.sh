@@ -115,6 +115,10 @@ else
   echo "cutover: legacy não alterado (use --bootout-legacy no cutover final)"
 fi
 
+# Release the installed executable and USB before replacing the daemon.
+if launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1 && [ -f "$PLIST" ]; then
+  launchctl bootout "gui/$UID_NUM" "$PLIST"
+fi
 install -m 755 "$AGENTD_BIN" "$AGENTD_MACOS/$INSTALL_BIN_NAME"
 # Compat: bin/Tessera → app executable (scripts / old docs)
 ln -sfn "../Tessera.app/Contents/MacOS/$INSTALL_BIN_NAME" "$BIN_DIR/$INSTALL_BIN_NAME"
@@ -153,6 +157,22 @@ PLIST
 # Refresh LaunchServices icon cache for this bundle
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$AGENTD_APP" 2>/dev/null || true
 migrate_setup_completed
+if [ "${TESSERA_PAUSE_AUTO_UPDATE:-0}" = 1 ]; then
+  python3 - "$INSTALL_ROOT/config.toml" <<'LOCALCONFIG'
+import os, pathlib, re, stat, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text() if path.exists() else ""
+mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+text, count = re.subn(r'^auto_update\s*=.*$', 'auto_update = false', text, flags=re.M)
+if not count:
+    text += "\nauto_update = false\n"
+temp = path.with_suffix(".local-build")
+temp.write_text(text)
+os.chmod(temp, mode)
+os.replace(temp, path)
+LOCALCONFIG
+  echo "cutover: local build — automatic updates paused (enable again after publishing a compatible release)"
+fi
 
 cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -190,13 +210,13 @@ cat >> "$PLIST" <<'PLIST'
 </plist>
 PLIST
 
-launchctl bootout "gui/$UID_NUM/$LABEL" 2>/dev/null || true
+launchctl bootout "gui/$UID_NUM" "$PLIST" 2>/dev/null || true
 sleep 1
 if ! launchctl bootstrap "gui/$UID_NUM" "$PLIST" 2>/tmp/tessera-bootstrap.err; then
   echo "cutover: bootstrap falhou — tentando de novo…" >&2
   cat /tmp/tessera-bootstrap.err >&2 || true
   sleep 2
-  launchctl bootout "gui/$UID_NUM/$LABEL" 2>/dev/null || true
+  launchctl bootout "gui/$UID_NUM" "$PLIST" 2>/dev/null || true
   launchctl bootstrap "gui/$UID_NUM" "$PLIST"
 fi
 launchctl enable "gui/$UID_NUM/$LABEL" 2>/dev/null || true
@@ -217,22 +237,18 @@ else
 fi
 
 if [ -d /Applications/Tessera.app ]; then
-  open -a Tessera || true
+  open "/Applications/Tessera.app" || true
 fi
 
-echo "cutover: aguardando Doctor (127.0.0.1:$IPC_PORT) …"
-deadline=$((SECONDS + 90))
+echo "cutover: checking the installed background service…"
+deadline=$((SECONDS + 20))
 while [ "$SECONDS" -lt "$deadline" ]; do
-  if body="$(curl -sf "http://127.0.0.1:${IPC_PORT}/v1/doctor" 2>/dev/null)"; then
-    if python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if all(c.get('level')!='bad' for c in d.get('checks',[])) else 1)" "$body"; then
-      summary="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['summary'])" "$body")"
-      echo "cutover: Doctor ok — $summary"
-      echo "cutover: concluído. Rode o gate: tools/agent_v2_gate.md"
-      exit 0
-    fi
+  if curl -sf --max-time 3 "http://127.0.0.1:${IPC_PORT}/v1/health" >/dev/null; then
+    echo "cutover: installed. Open Tessera to choose integrations and grant permissions."
+    echo "cutover: missing permissions do not mean installation failed."
+    exit 0
   fi
-  sleep 2
+  sleep 1
 done
-
-echo "cutover: Doctor não ficou verde a tempo — veja: curl -s http://127.0.0.1:${IPC_PORT}/v1/doctor | python3 -m json.tool" >&2
+echo "cutover: service did not respond — inspect ~/.tessera/agentd.log" >&2
 exit 1

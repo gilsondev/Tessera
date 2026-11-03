@@ -14,8 +14,7 @@ use tessera_profile::{read_config, write_config, AgentdConfig, ProfilePaths};
 
 use crate::logutil;
 
-pub const DEFAULT_MANIFEST_URL: &str =
-    "https://gilsondev.github.io/Tessara/latest.json";
+pub const DEFAULT_MANIFEST_URL: &str = "https://gilsondev.github.io/Tessera/latest.json";
 const POLL_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 const STARTUP_DELAY: Duration = Duration::from_secs(20);
 
@@ -177,7 +176,11 @@ impl UpdateService {
     fn apply_inner(&self, m: &LatestManifest) -> Result<(), String> {
         logutil::info(
             &self.logs,
-            format!("update: baixando {} → {}", env!("CARGO_PKG_VERSION"), m.version),
+            format!(
+                "update: baixando {} → {}",
+                env!("CARGO_PKG_VERSION"),
+                m.version
+            ),
         );
         let tmp = std::env::temp_dir().join(format!("tessera-update-{}", m.version));
         let _ = fs::remove_dir_all(&tmp);
@@ -197,7 +200,15 @@ impl UpdateService {
 
         let stage = tmp.join("stage");
         fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
-        run_ok("tar", &["-C", stage.to_str().unwrap(), "-xzf", agentd_tgz.to_str().unwrap()])?;
+        run_ok(
+            "tar",
+            &[
+                "-C",
+                stage.to_str().unwrap(),
+                "-xzf",
+                agentd_tgz.to_str().unwrap(),
+            ],
+        )?;
 
         let home = std::env::var("HOME").map_err(|_| "HOME ausente".to_string())?;
         let install_root = PathBuf::from(&home).join(".tessera/agentd");
@@ -226,7 +237,12 @@ impl UpdateService {
         fs::create_dir_all(&unzip_dir).map_err(|e| e.to_string())?;
         run_ok(
             "ditto",
-            &["-x", "-k", app_zip.to_str().unwrap(), unzip_dir.to_str().unwrap()],
+            &[
+                "-x",
+                "-k",
+                app_zip.to_str().unwrap(),
+                unzip_dir.to_str().unwrap(),
+            ],
         )?;
         let app_src = find_app(&unzip_dir).ok_or_else(|| "zip sem Tessera.app".to_string())?;
         let app_dst = PathBuf::from("/Applications/Tessera.app");
@@ -246,7 +262,9 @@ impl UpdateService {
         logutil::info(&self.logs, "update: instalado — reiniciando LaunchAgent");
         let uid = libc_uid();
         let label = format!("gui/{uid}/com.tessera.agentd");
-        let _ = Command::new("launchctl").args(["kickstart", "-k", &label]).status();
+        let _ = Command::new("launchctl")
+            .args(["kickstart", "-k", &label])
+            .status();
 
         let _ = fs::remove_dir_all(&tmp);
         Ok(())
@@ -285,7 +303,9 @@ fn find_app(root: &Path) -> Option<PathBuf> {
 
 fn download(url: &str, dest: &Path) -> Result<(), String> {
     if url.contains("github.com") && url.ends_with("/latest") {
-        return Err("manifest ainda aponta para /releases/latest — espere um release com artefatos".into());
+        return Err(
+            "manifest ainda aponta para /releases/latest — espere um release com artefatos".into(),
+        );
     }
     let mut resp = ureq::get(url)
         .timeout(Duration::from_secs(120))

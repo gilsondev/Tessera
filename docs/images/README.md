@@ -1,22 +1,7 @@
-# Screenshots
+# Product screenshots
 
-Committed PNGs for the root README (320×480 portrait).
+These are selected, sanitized images used by the README, guides and public site. Firmware images come from deterministic simulator fixtures; `agent-calendars.png` comes from the browser journey using an isolated synthetic backend.
 
-## Regenerate from the simulator
+Run `make e2e` and `make e2e-browser` before refreshing them. Convert selected BMP files with `sips -s format png ... --out ...` on macOS. `product-home.png` uses the `showcase` fixture.
 
-```bash
-make finish-host   # writes BMPs under $SIM_OUT (default /tmp/tessera-sim-out/)
-# convert examples:
-sips -s format png /tmp/tessera-sim-out/normal.bmp --out docs/images/normal.png
-sips -s format png /tmp/tessera-sim-out/detail-weather.bmp --out docs/images/detail-weather.png
-sips -s format png /tmp/tessera-sim-out/detail-clock.bmp --out docs/images/detail-clock.png
-```
-
-## On-device
-
-```bash
-make device-snap   # → $SIM_OUT/device-snap.png
-cp /tmp/tessera-sim-out/device-snap.png docs/images/device-first-use.png
-```
-
-Refresh these when home / detail UI changes in a visible way.
+Real device captures stay local by default: they may contain personal tasks, calendar names, accounts and network information. Do not copy a raw capture into Git without review. The existing first-use capture is the reviewed exception. See [asset policy](../guides/repository-assets.md).

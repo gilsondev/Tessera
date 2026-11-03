@@ -2,7 +2,10 @@
 
 #include "domain/dashboard_layout.h"
 
+namespace sim_face { void seconds(bool on); }
+
 namespace sim_time {
+void seconds(int value);
 void set(int hour, int minute, int wday, int day, int month, bool ok = true);
 }
 

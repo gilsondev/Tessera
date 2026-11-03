@@ -15,6 +15,7 @@ char g_tz[24] = "sao_paulo";
 }  // namespace
 
 namespace sim_time {
+void seconds(int value) { g_second = value; }
 void set(int hour, int minute, int wday, int day, int month, bool ok = true) {
     g_hour = hour;
     g_minute = minute;

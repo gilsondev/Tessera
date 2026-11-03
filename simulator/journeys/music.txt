@@ -1,0 +1,13 @@
+expect-screen media
+expect-text Synthetic song
+media MEDIA|v1|1|playing|Second song|Another artist|Music|Second album|2025|second
+expect-text Second song
+expect-text Another artist
+expect-text Second album · 2025
+snapshot journey-media.bmp
+media MEDIA|v1|1|paused|Second song|Another artist|Music|Second album|2025|second
+expect-text pausado
+media MEDIA|v1|1|stopped||||||
+expect-text Nada tocando
+tap 32 28
+expect-screen home

@@ -18,3 +18,10 @@ __pycache__/
 .vscode/
 .worktrees/
 mise.local.toml
+
+# Generated website and local media sessions (see docs/guides/repository-assets.md).
+site/dist/
+docs/social/
+docs/media/
+docs/images/device-*.png
+!docs/images/device-first-use.png

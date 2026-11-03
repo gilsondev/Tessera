@@ -1,4 +1,4 @@
-import { DOCTOR_FIXTURE, LOGS_FIXTURE_LINES } from "./fixtures.js";
+
 
 /** agentd localhost IPC (TESSERA_AGENTD_IPC_PORT / VITE_AGENTD_PORT, default 19792). */
 export const AGENTD_PORT = Number(
@@ -42,7 +42,7 @@ export async function postScan(body = {}) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(IPC_TIMEOUT_MS * 2),
+    signal: AbortSignal.timeout(10000),
   });
   if (!r.ok) throw new Error(`scan ${r.status}`);
   return r.json();
@@ -60,20 +60,25 @@ export async function fetchMachines() {
 /**
  * @returns {Promise<{ report: { summary: string, checks: object[] }, demo: boolean }>}
  */
+let doctorPending = null;
 export async function fetchDoctor() {
+  if (!doctorPending) doctorPending = readDoctor().finally(() => { doctorPending = null; });
+  return doctorPending;
+}
+async function readDoctor() {
   try {
     const r = await fetch(agentdUrl("/v1/doctor"), {
-      signal: AbortSignal.timeout(IPC_TIMEOUT_MS),
+      signal: AbortSignal.timeout(10000),
     });
     if (r.status === 404 || r.status === 501) {
-      return { report: DOCTOR_FIXTURE, demo: true };
+      return { report: { summary: "unavailable", checks: [{ id: "agentd", level: "bad", title: "Diagnóstico indisponível", detail: "Abra o Tessera em segundo plano e tente novamente." }] }, demo: false };
     }
     if (!r.ok) throw new Error(`doctor ${r.status}`);
     const report = await r.json();
     if (!report?.checks?.length) throw new Error("doctor empty");
     return { report, demo: false };
   } catch {
-    return { report: DOCTOR_FIXTURE, demo: true };
+    return { report: { summary: "unavailable", checks: [{ id: "agentd", level: "bad", title: "Diagnóstico indisponível", detail: "Abra o Tessera em segundo plano e tente novamente." }] }, demo: false };
   }
 }
 
@@ -88,15 +93,15 @@ export async function fetchLogs(tail = 200) {
       signal: AbortSignal.timeout(IPC_TIMEOUT_MS),
     });
     if (r.status === 404 || r.status === 501) {
-      return { lines: LOGS_FIXTURE_LINES, demo: true };
+      return { lines: ["Não foi possível carregar o histórico. Verifique a conexão com o Agente."], demo: false };
     }
     if (!r.ok) throw new Error(`logs ${r.status}`);
     const body = await r.json();
     const lines = Array.isArray(body?.lines) ? body.lines : [];
-    if (!lines.length) throw new Error("logs empty");
+
     return { lines, demo: false };
   } catch {
-    return { lines: LOGS_FIXTURE_LINES, demo: true };
+    return { lines: ["Não foi possível carregar o histórico. Verifique a conexão com o Agente."], demo: false };
   }
 }
 
@@ -190,10 +195,10 @@ export async function postPanelWeather(body) {
 
 /** @param {string} selection comma-separated calendar ids */
 export async function postCalendarSelection(selection) {
-  const r = await fetch(agentdUrl("/v1/panel/calendar/selection"), {
+  const r = await fetch(agentdUrl("/v1/calendar/selection"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ selection }),
+    body: JSON.stringify(selection.split(",").filter(Boolean)),
     signal: AbortSignal.timeout(IPC_TIMEOUT_MS * 4),
   });
   if (!r.ok) throw new Error(`panel/calendar/selection ${r.status}`);
@@ -201,7 +206,7 @@ export async function postCalendarSelection(selection) {
 }
 
 export async function postCalendarAddAccount() {
-  const r = await fetch(agentdUrl("/v1/panel/calendar/add_account"), {
+  const r = await fetch(agentdUrl("/v1/calendar/connect"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",
@@ -281,4 +286,15 @@ export function isAgentdOnline(status) {
 
 export function isUsbUp(status) {
   return status?.usb === "up";
+}
+
+export async function calendarRequest(path = "", body) {
+  const r = await fetch(agentdUrl(`/v1/calendar${path}`), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "Content-Type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
 }

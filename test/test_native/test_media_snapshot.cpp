@@ -55,22 +55,28 @@ void test_mac_stale_after_45s(void) {
 
 void test_mac_cover_assembles_chunks(void) {
     media::View v{};
-    // First chunk only (480 raw max): 192 LE red pixels → 384 hex.
-    char hex[385];
-    for (int i = 0; i < 192; ++i) {
-        snprintf(hex + i * 2, 3, "%02x", (i % 2 == 0) ? 0x00 : 0xf8);
+    media::apply_line(v,"MEDIA\tv1\t1\tplaying\tSong\tArtist\tMusic\tAlbum\t2026\tabc123",1);
+    TEST_ASSERT_EQUAL_STRING("Album",v.media.album);
+    TEST_ASSERT_EQUAL_STRING("2026",v.media.year);
+    char hex[961], line[1100];
+    const int chunks = (media::kCoverBytes + 479) / 480;
+    // A final chunk arriving first must never produce a valid image.
+    snprintf(line,sizeof(line),"MEDIA_COVER\tv1\t1\tabc123\t200\t200\trgb565le\t%d\t%d\t00",chunks,chunks-1);
+    TEST_ASSERT_FALSE(media::apply_cover_line(v,line));
+    for (int i=0;i<chunks;++i) {
+        const int size = (media::kCoverBytes - i*480) < 480 ? media::kCoverBytes-i*480 : 480;
+        for (int j=0;j<size;++j) snprintf(hex+j*2,3,"%02x",j%2 ? 0xf8 : 0x00);
+        snprintf(line,sizeof(line),"MEDIA_COVER\tv1\t1\tabc123\t200\t200\trgb565le\t%d\t%d\t%s",chunks,i,hex);
+        TEST_ASSERT_EQUAL(i==chunks-1,media::apply_cover_line(v,line));
     }
-    char line[512];
-    // chunks=1 completes when idx 0 arrives (host may pad; firmware marks ready on got>=chunks).
-    snprintf(line, sizeof(line),
-             "MEDIA_COVER\tv1\t1\tabc123\t200\t200\trgb565le\t1\t0\t%s", hex);
-    TEST_ASSERT_TRUE(media::apply_cover_line(v, line));
     TEST_ASSERT_TRUE(v.cover.ready);
     TEST_ASSERT_NOT_NULL(v.cover.rgb565);
-    TEST_ASSERT_EQUAL_STRING("abc123", v.cover.key);
-    TEST_ASSERT_EQUAL(200, v.cover.w);
-    TEST_ASSERT_EQUAL(0x00, v.cover.rgb565[0]);
-    TEST_ASSERT_EQUAL(0xf8, v.cover.rgb565[1]);
+    TEST_ASSERT_EQUAL_STRING("abc123",v.cover.key);
+    TEST_ASSERT_EQUAL(0xf8,v.cover.rgb565[1]);
+    // Metadata moves first; a delayed cover from the previous track is rejected.
+    media::apply_line(v,"MEDIA\tv1\t1\tplaying\tNew\tArtist\tMusic\tAlbum\t2026\tnewkey",2);
+    TEST_ASSERT_FALSE(media::apply_cover_line(v,line));
+    TEST_ASSERT_FALSE(v.cover.ready);
 }
 
 void test_mac_cover_clears_on_track_change(void) {

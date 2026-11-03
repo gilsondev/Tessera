@@ -1,45 +1,47 @@
-#!/bin/sh
-# Build, reboot the board into the ROM bootloader over USB and flash it.
-set -e
+#!/usr/bin/env bash
+# Build and verify the actual JC3248 upload; always restore the companion.
+set -euo pipefail
 cd "$(dirname "$0")/.."
-# agentd KeepAlive holds the serial port — pause it for the 1200-baud reclaim.
 UID_NUM="$(id -u)"
-launchctl bootout "gui/$UID_NUM/com.tessera.agentd" 2>/dev/null || true
-pkill -f '/.tessera/agentd/bin/' 2>/dev/null || true
+AGENT_PLIST="$HOME/Library/LaunchAgents/com.tessera.agentd.plist"
+AGENT_SERVICE="gui/$UID_NUM/com.tessera.agentd"
+AGENT_WAS_RUNNING=0
+UPLOAD_LOG="$(mktemp /tmp/tessera-upload.XXXXXX)"
+resume_agent() {
+  if [ "$AGENT_WAS_RUNNING" = 1 ] && [ -f "$AGENT_PLIST" ]; then
+    launchctl bootstrap "gui/$UID_NUM" "$AGENT_PLIST" 2>/dev/null || true
+    launchctl kickstart -k "$AGENT_SERVICE" 2>/dev/null || true
+  fi
+  rm -f "$UPLOAD_LOG"
+}
+trap resume_agent EXIT
+if launchctl print "$AGENT_SERVICE" >/dev/null 2>&1; then
+  AGENT_WAS_RUNNING=1
+  launchctl bootout "gui/$UID_NUM" "$AGENT_PLIST"
+fi
 sleep 0.5
 .venv/bin/pio run -e jc3248w535
 .venv/bin/python - <<'PY'
-import glob, time, serial
-ports = sorted(p for p in glob.glob("/dev/cu.usbmodem*") if not p.endswith("1401"))
+import glob, time, serial, termios
+ports = sorted(p for p in glob.glob('/dev/cu.usbmodem*') if not p.endswith('1401'))
 if ports:
     try:
-        s = serial.Serial(ports[0], 115200, timeout=0.2)
-        s.write(b"FLASH\n")
-        s.flush()
-        deadline = time.time() + 1.5
-        while time.time() < deadline and b"flash pronto" not in s.read(256):
-            pass
-        s.close()
-    except (serial.SerialException, OSError):
-        pass
+        with serial.Serial(ports[0],115200,timeout=.2) as s:
+            s.dtr=True;s.write(b'FLASH\n');s.flush()
+            deadline=time.monotonic()+1.5
+            while time.monotonic()<deadline and b'flash pronto' not in s.read(256): pass
+    except (serial.SerialException,OSError,termios.error): pass
     try:
-        s = serial.Serial(ports[0], 1200)
-        s.dtr = False
-        s.rts = False
-        time.sleep(0.4)
-        s.close()
-    except (serial.SerialException, OSError):
-        pass
+        with serial.Serial(ports[0],1200) as s:
+            s.dtr=False;s.rts=False;time.sleep(.4)
+    except (serial.SerialException,OSError,termios.error): pass
 for _ in range(60):
-    if glob.glob("/dev/cu.usbmodem1401"):
-        break
-    time.sleep(0.15)
-else:
-    raise SystemExit("bootloader nao apareceu")
+    if glob.glob('/dev/cu.usbmodem1401'): break
+    time.sleep(.15)
+else: raise SystemExit('JC3248 bootloader did not appear; upload was not performed')
 PY
-.venv/bin/pio run -t upload --upload-port /dev/cu.usbmodem1401
-# Resume agentd if the LaunchAgent plist is present.
-if [ -f "$HOME/Library/LaunchAgents/com.tessera.agentd.plist" ]; then
-  launchctl bootstrap "gui/$UID_NUM" "$HOME/Library/LaunchAgents/com.tessera.agentd.plist" 2>/dev/null || true
-  launchctl kickstart -k "gui/$UID_NUM/com.tessera.agentd" 2>/dev/null || true
+.venv/bin/pio run -e jc3248w535 -t upload --upload-port /dev/cu.usbmodem1401 | tee "$UPLOAD_LOG"
+if ! grep -q 'Hash of data verified' "$UPLOAD_LOG"; then
+  echo 'Upload did not confirm the flash hash; refusing to report success.' >&2
+  exit 1
 fi

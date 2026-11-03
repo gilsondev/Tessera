@@ -1,6 +1,6 @@
 //! MEDIA capability — Now Playing encode + panel commands.
 
-mod cover;
+pub mod cover;
 
 use tessera_protocol::media_line;
 
@@ -21,6 +21,9 @@ pub struct MediaInfo {
     pub title: String,
     pub artist: String,
     pub app: String,
+    pub album: String,
+    pub year: String,
+    pub artwork_url: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,17 +52,11 @@ impl MediaState {
 }
 
 /// Golden-compatible encoder (delegates to `tessera_protocol::media_line`).
-pub fn encode_media_line(
-    ok: bool,
-    state: &str,
-    title: &str,
-    artist: &str,
-    app: &str,
-) -> String {
+pub fn encode_media_line(ok: bool, state: &str, title: &str, artist: &str, app: &str) -> String {
     media_line(ok, state, title, artist, app)
 }
 
-pub trait MediaWatcher {
+pub trait MediaWatcher: Send {
     /// `None` → wire OK=0 line (watcher unavailable).
     fn read(&mut self) -> Option<MediaInfo>;
 }
@@ -74,6 +71,9 @@ impl MediaWatcher for StubWatcher {
             title: String::new(),
             artist: String::new(),
             app: String::new(),
+            album: String::new(),
+            year: String::new(),
+            artwork_url: String::new(),
         })
     }
 }
@@ -84,6 +84,9 @@ mod macos {
     use std::process::Command;
 
     const OSASCRIPT: &str = r#"
+    set albumText to ""
+    set yearText to ""
+    set artworkUrl to ""
     set titleText to ""
     set artistText to ""
     set appName to ""
@@ -100,11 +103,15 @@ mod macos {
             set titleText to name of current track
             set artistText to artist of current track
             set appName to "Music"
+            set albumText to album of current track
+            try
+              set yearText to (year of current track) as text
+            end try
           end if
         end tell
       end if
     end try
-    if titleText is "" then
+    if titleText is "" or playState is not "playing" then
       try
         if application "Spotify" is running then
           tell application "Spotify"
@@ -117,12 +124,14 @@ mod macos {
               set titleText to name of current track
               set artistText to artist of current track
               set appName to "Spotify"
+              set albumText to album of current track
+              set artworkUrl to artwork url of current track
             end if
           end tell
         end if
       end try
     end if
-    return playState & tab & titleText & tab & artistText & tab & appName
+    return playState & tab & titleText & tab & artistText & tab & appName & tab & albumText & tab & yearText & tab & artworkUrl
     "#;
 
     pub struct MacNowPlayingWatcher;
@@ -143,11 +152,17 @@ mod macos {
             let title = parts.next().unwrap_or("").to_string();
             let artist = parts.next().unwrap_or("").to_string();
             let app = parts.next().unwrap_or("").to_string();
+            let album = parts.next().unwrap_or("").to_string();
+            let year = parts.next().unwrap_or("").to_string();
+            let artwork_url = parts.next().unwrap_or("").to_string();
             Some(MediaInfo {
                 state: MediaState::parse(state),
                 title,
                 artist,
                 app,
+                album,
+                year,
+                artwork_url,
             })
         }
     }
@@ -211,10 +226,32 @@ impl MediaCapability {
                     &info.artist,
                     &info.app,
                 );
+                let field = |s: &str| {
+                    s.chars()
+                        .map(|c| {
+                            if c == '\t' || c == '\n' || c == '\r' {
+                                ' '
+                            } else {
+                                c
+                            }
+                        })
+                        .take(80)
+                        .collect::<String>()
+                };
+                let line = format!(
+                    "{line}\t{}\t{}\t{}",
+                    field(&info.album),
+                    field(&info.year),
+                    cover::cover_key(&info)
+                );
                 self.last_info = Some(info);
                 line
             }
         }
+    }
+
+    pub fn current_info(&self) -> Option<MediaInfo> {
+        self.last_info.clone()
     }
 
     /// Fetch + encode cover for the last `build_line` track. `None` if unavailable.
@@ -249,18 +286,8 @@ impl MediaCapability {
         if raw.starts_with("MEDIA_COVER") {
             return vec![];
         }
-        let parts: Vec<&str> = raw.split('\t').collect();
-        if parts.first().copied() != Some("MEDIA") || parts.len() < 2 {
-            return vec![];
-        }
-        let cmd = parts[1].trim().to_ascii_uppercase();
-        match cmd.as_str() {
-            "PLAYPAUSE" | "NEXT" | "PREV" | "PREVIOUS" => {
-                // Transport stub until controls are ported.
-                vec![self.build_line()]
-            }
-            _ => vec![],
-        }
+        // Informational widget: playback controls intentionally removed.
+        vec![]
     }
 }
 

@@ -20,8 +20,6 @@ bool standalone_screen = false;
 focus::View cached = {};
 bool cached_agent_ok = false;
 bool had_good_agent = false;
-char pending_id[focus::kIdMax] = {};
-bool pending = false;
 
 void set_if(lv_obj_t *label, const char *text) {
     if (label && text && strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
@@ -42,65 +40,6 @@ void fire_cmd(const char *cmd) {
     if (cmd_cb && cmd) cmd_cb(cmd);
 }
 
-void on_mode(lv_event_t *e) {
-    auto *id = static_cast<const char *>(lv_event_get_user_data(e));
-    if (pending) return;  // ignore taps while applying
-    if (!id || !id[0]) {
-        pending = true;
-        pending_id[0] = '\0';
-        set_status("aplicando…");
-        fire_cmd("OFF");
-        return;
-    }
-    pending = true;
-    strncpy(pending_id, id, sizeof(pending_id) - 1);
-    pending_id[sizeof(pending_id) - 1] = '\0';
-    char line[80];
-    std::snprintf(line, sizeof(line), "SET\t%s", id);
-    set_status("aplicando…");
-    fire_cmd(line);
-}
-
-lv_obj_t *make_cell(lv_obj_t *parent, const char *label, const char *id, bool active, bool loading) {
-    lv_obj_t *cell = kit::bare(parent);
-    lv_obj_set_width(cell, 0);
-    lv_obj_set_flex_grow(cell, 1);
-    lv_obj_set_style_min_width(cell, 0, 0);
-    lv_obj_set_height(cell, 72);
-    const bool busy = loading;
-    lv_obj_set_style_bg_color(cell, active ? lv_color_hex(palette::widget_mac()) : theme::surface(), 0);
-    lv_obj_set_style_bg_opa(cell, busy ? LV_OPA_70 : LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(cell, 14, 0);
-    lv_obj_set_style_border_width(cell, 1, 0);
-    lv_obj_set_style_border_color(cell, theme::border(), 0);
-    lv_obj_set_style_pad_all(cell, 10, 0);
-    lv_obj_set_flex_flow(cell, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(cell, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(cell, 4, 0);
-    if (!busy) {
-        lv_obj_add_flag(cell, LV_OBJ_FLAG_CLICKABLE);
-        kit::press_feedback(cell);
-        lv_obj_add_event_cb(cell, on_mode, LV_EVENT_CLICKED, const_cast<char *>(id));
-    }
-
-    lv_obj_t *text = lv_label_create(cell);
-    lv_label_set_text(text, label);
-    lv_label_set_long_mode(text, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(text, lv_pct(100));
-    lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(text, &theme::label_font(), 0);
-    lv_obj_set_style_text_color(text, active ? lv_color_white() : theme::text_primary(), 0);
-
-    if (busy) {
-        kit::spinner(cell, 18, 3);
-    } else if (active) {
-        lv_obj_t *mark = lv_label_create(cell);
-        lv_label_set_text(mark, LV_SYMBOL_OK);
-        lv_obj_set_style_text_color(mark, lv_color_white(), 0);
-    }
-    return cell;
-}
-
 void build_into(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(parent, theme::background(), 0);
     lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
@@ -113,7 +52,7 @@ void build_into(lv_obj_t *parent) {
     kit::SubsysBar bar = kit::subsys_bar(parent, LV_SYMBOL_LEFT, back_cb, palette::widget_mac());
     title_label = bar.title;
     status_label = bar.status;
-    lv_label_set_text(title_label, "Focus");
+    lv_label_set_text(title_label, "Foco");
 
     body = kit::bare(parent);
     lv_obj_set_width(body, lv_pct(100));
@@ -156,35 +95,17 @@ void refill_grid(const focus::View &view, bool agent_ok) {
         return;
     }
 
-    // Clear pending when Mac confirms the requested mode (or none).
-    if (pending) {
-        const bool want_none = pending_id[0] == '\0';
-        const bool got_none = !view.active_id[0];
-        if (want_none && got_none) pending = false;
-        else if (!want_none && view.active_id[0] && strcmp(view.active_id, pending_id) == 0) pending = false;
-    }
-
-    const bool none_active = !view.active_id[0];
-    const bool none_loading = pending && pending_id[0] == '\0';
-    // Two cells per row: each flex_grow 1 in ROW_WRAP with ~50% via min width trick —
-    // set width to (100%-gap)/2 using fixed calc: parent pad 12*2, gap 8 → ~140 on 320.
-    auto add = [&](const char *label, const char *id, bool active, bool loading) {
-        lv_obj_t *cell = make_cell(grid, label, id, active, loading);
-        lv_obj_set_width(cell, 140);
-        lv_obj_set_flex_grow(cell, 0);
-        (void)cell;
-    };
-    add("Nenhum", "", none_active, none_loading);
-    for (int i = 0; i < view.mode_count; ++i) {
-        const bool active = view.active_id[0] && strcmp(view.modes[i].id, view.active_id) == 0;
-        const char *label = view.modes[i].name[0] ? view.modes[i].name : view.modes[i].id;
-        const bool loading = pending && pending_id[0] && strcmp(view.modes[i].id, pending_id) == 0;
-        add(label, view.modes[i].id, active, loading);
-    }
-    if (pending) set_status("aplicando…");
-    else if (view.stale) set_status("desatualizado");
-    else if (view.active_name[0]) set_status(view.active_name);
-    else set_status("Nenhum");
+    lv_obj_t *name = lv_label_create(grid);
+    lv_obj_set_width(name, lv_pct(100));
+    lv_label_set_text(name, view.active_name[0] ? view.active_name : "Nenhum foco ativo");
+    lv_obj_set_style_text_font(name, &theme::title_font(), 0);
+    lv_obj_set_style_text_color(name, theme::text_primary(), 0);
+    lv_obj_t *hint = lv_label_create(grid);
+    lv_obj_set_width(hint, lv_pct(100));
+    lv_label_set_text(hint, "Altere o foco na Central de Controle do Mac. O painel acompanha automaticamente.");
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(hint, theme::text_secondary(), 0);
+    set_status(view.stale ? "desatualizado" : "No Mac");
 }
 
 }  // namespace
@@ -201,8 +122,6 @@ void mac_page::unmount() {
     screen = nullptr;
     title_label = status_label = body = grid = nullptr;
     standalone_screen = false;
-    pending = false;
-    pending_id[0] = '\0';
 }
 
 void mac_page::mount(lv_obj_t *parent) {

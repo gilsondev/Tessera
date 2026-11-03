@@ -45,6 +45,16 @@ fn open_privacy_settings(
     Ok(())
 }
 
+#[tauri::command]
+fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("Link inválido".into());
+    }
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 fn install_tray(app: &AppHandle) -> tauri::Result<()> {
     use tauri::menu::MenuBuilder;
     use tauri::tray::TrayIconBuilder;
@@ -56,11 +66,10 @@ fn install_tray(app: &AppHandle) -> tauri::Result<()> {
     let tray_menu = MenuBuilder::new(app)
         .text("open", "Abrir Tessera")
         .text("panel", "Ajustar o painel")
-        .text("mac", "O que vai ao painel")
+        .text("mac", "Integrações deste Mac")
         .separator()
-        .text("doctor", "Doctor")
+        .text("doctor", "Diagnóstico")
         .text("scan", "Varrer este Mac")
-        .text("machines", "Meus computadores")
         .text("activity", "Atividade / log")
         .separator()
         .text("portal", "Abrir tessera.local")
@@ -92,7 +101,10 @@ fn install_tray(app: &AppHandle) -> tauri::Result<()> {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![open_privacy_settings])
+        .invoke_handler(tauri::generate_handler![
+            open_privacy_settings,
+            open_external_url
+        ])
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -118,23 +130,21 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_menu_event(|app, event| {
-            match event.id().as_ref() {
-                "open" => show_main_window(app),
-                "panel" => emit_navigate(app, "panel"),
-                "mac" => emit_navigate(app, "mac"),
-                "machines" => emit_navigate(app, "machines"),
-                "doctor" => emit_navigate(app, "doctor"),
-                "scan" => emit_navigate(app, "scan"),
-                "activity" => emit_navigate(app, "activity"),
-                "portal" => {
-                    let _ = app.opener().open_url("http://tessera.local", None::<&str>);
-                }
-                "quit" => {
-                    app.exit(0);
-                }
-                _ => {}
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "open" => show_main_window(app),
+            "panel" => emit_navigate(app, "panel"),
+            "mac" => emit_navigate(app, "mac"),
+            "machines" => emit_navigate(app, "machines"),
+            "doctor" => emit_navigate(app, "doctor"),
+            "scan" => emit_navigate(app, "scan"),
+            "activity" => emit_navigate(app, "activity"),
+            "portal" => {
+                let _ = app.opener().open_url("http://tessera.local", None::<&str>);
             }
+            "quit" => {
+                app.exit(0);
+            }
+            _ => {}
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

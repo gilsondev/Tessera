@@ -66,6 +66,9 @@ struct Drag {
     uint32_t start;
     uint32_t duration;
 } drag;
+uint32_t scripted_samples = 0;
+uint32_t scripted_presses = 0;
+int16_t last_script_x = 0, last_script_y = 0;
 
 struct Key {
     bool down;
@@ -102,9 +105,13 @@ void logical_to_native(int lx, int ly, int16_t &x, int16_t &y) {
 
 bool scripted(int16_t &x, int16_t &y, bool &pressed) {
     if (!drag.active) return false;
+    ++scripted_samples;
+    // Start when LVGL first samples the gesture, not while a preceding render is busy.
+    if (!drag.start) drag.start = millis();
     uint32_t elapsed = millis() - drag.start;
     if (elapsed > drag.duration) {
         drag.active = false;
+        logical_to_native(drag.x1, drag.y1, x, y);
         pressed = false;
         return true;
     }
@@ -112,6 +119,7 @@ bool scripted(int16_t &x, int16_t &y, bool &pressed) {
     int ly = drag.y0 + static_cast<int>((drag.y1 - drag.y0) * static_cast<int64_t>(elapsed) / drag.duration);
     logical_to_native(lx, ly, x, y);
     pressed = true;
+    ++scripted_presses; last_script_x = x; last_script_y = y;
     return true;
 }
 
@@ -192,7 +200,7 @@ void input_host::inject_drag(int x0, int y0, int x1, int y1, uint32_t duration_m
     } else if (activity_handler) {
         activity_handler();
     }
-    drag = Drag{true, x0, y0, x1, y1, millis(), duration_ms ? duration_ms : 1};
+    drag = Drag{true, x0, y0, x1, y1, 0, duration_ms ? duration_ms : 1};
 }
 
 void input_host::set_resting(bool on) {
@@ -206,6 +214,7 @@ void input_host::set_wake_handler(void (*on_wake)()) { wake_handler = on_wake; }
 void input_host::set_activity_handler(void (*on_activity)()) { activity_handler = on_activity; }
 
 void input_host::report(Print &out) {
+    out.printf("GESTURE samples=%lu pressed=%lu last=%d,%d active=%d resting=%d swallowed=%d rotation=%d\n", static_cast<unsigned long>(scripted_samples),static_cast<unsigned long>(scripted_presses),last_script_x,last_script_y,drag.active,resting,swallowing,static_cast<int>(display_host::rotation()));
     out.printf("TOUCH errors=%lu lost=%lu pressed=%d\n", static_cast<unsigned long>(filter.errors),
                static_cast<unsigned long>(filter.lost), filter.pressed ? 1 : 0);
 }

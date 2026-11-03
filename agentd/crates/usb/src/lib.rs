@@ -1,10 +1,11 @@
 //! Serial CDC helpers (DTR on open — required by ESP32 CDC).
 
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::time::Duration;
 
 pub const BAUD: u32 = 115_200;
-pub const READ_TIMEOUT_MS: u64 = 200;
+pub const READ_TIMEOUT_MS: u64 = 10;
+pub const WRITE_TIMEOUT_MS: u64 = 1000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsbError {
@@ -15,6 +16,31 @@ pub enum UsbError {
 }
 
 pub struct PortName(pub String);
+
+/// Reads stay responsive while writes tolerate the panel's render/USB backpressure.
+/// serialport exposes a shared timeout, so set it for each operation explicitly.
+pub struct TesseraPort {
+    inner: Box<dyn serialport::SerialPort>,
+}
+impl Read for TesseraPort {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.inner
+            .set_timeout(Duration::from_millis(READ_TIMEOUT_MS))
+            .map_err(io::Error::other)?;
+        self.inner.read(bytes)
+    }
+}
+impl Write for TesseraPort {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.inner
+            .set_timeout(Duration::from_millis(WRITE_TIMEOUT_MS))
+            .map_err(io::Error::other)?;
+        self.inner.write(bytes)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
 
 /// Tessera / ESP32 CDC candidates (matches `agent.runtime.app_ports` naming).
 pub fn list_candidate_ports() -> Vec<PortName> {
@@ -38,7 +64,7 @@ fn is_tessera_candidate(name: &str) -> bool {
 }
 
 /// Open serial at 115200 with read timeout; assert DTR after settle (match Python `open_serial`).
-pub fn open_tessera_port(path: &str) -> Result<Box<dyn serialport::SerialPort>, UsbError> {
+pub fn open_tessera_port(path: &str) -> Result<TesseraPort, UsbError> {
     let mut port = serialport::new(path, BAUD)
         .timeout(Duration::from_millis(READ_TIMEOUT_MS))
         .open()
@@ -46,12 +72,10 @@ pub fn open_tessera_port(path: &str) -> Result<Box<dyn serialport::SerialPort>, 
     // dsrdtr=False on Python open avoids the macOS CDC reset pulse; we do not toggle DTR
     // until after settle below.
     let _ = port.write_request_to_send(false);
-    std::thread::sleep(Duration::from_millis(500)); // settle after open (CDC enumerate)
-    // ESP32 USB CDC suppresses device→host TX while DTR is low, so panel commands
-    // (MEDIA\tPLAYPAUSE, CALENDAR?, …) never arrive. Assert DTR after settle — open
-    // already happened without the reset pulse policy from Python.
+    // Settle after open (CDC enumeration), then assert DTR so ESP32 can send.
+    std::thread::sleep(Duration::from_millis(500));
     let _ = port.write_data_terminal_ready(true);
-    Ok(port)
+    Ok(TesseraPort { inner: port })
 }
 
 /// Write AGENT handshake line + newline (transport); callers pass protocol body without `\n`.
@@ -68,7 +92,7 @@ pub fn write_line(w: &mut impl Write, line: &str) -> io::Result<()> {
     w.write_all(body.as_bytes())?;
     w.write_all(b"\n")?;
     w.flush()?;
-    std::thread::sleep(Duration::from_millis(20));
+    std::thread::sleep(Duration::from_millis(2));
     Ok(())
 }
 

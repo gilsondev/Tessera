@@ -22,6 +22,8 @@ void dispatch(char *text, ConsoleHandler &handler) {
         handler.on_reload();
     } else if (!strcmp(text, "SNAP")) {
         handler.on_snapshot();
+    } else if (!strcmp(text, "UI_TREE")) {
+        handler.on_ui_tree();
     } else if (!strcmp(text, "PERF")) {
         handler.on_perf();
     } else if (!strcmp(text, "FLASH")) {
@@ -73,13 +75,18 @@ void dispatch(char *text, ConsoleHandler &handler) {
 }  // namespace
 
 void console::poll(ConsoleHandler &handler) {
-    while (Serial.available()) {
+    // A continuous artwork/catalog stream must yield to the clock and input.
+    // Keep partial lines intact; USB flow control handles the remaining bytes.
+    const uint32_t started = millis();
+    size_t bytes = 0;
+    while (Serial.available() && bytes++ < 4096 && millis() - started < 4) {
         char value = static_cast<char>(Serial.read());
         if (value == '\r') continue;
         if (value == '\n') {
             line[used] = '\0';
-            if (used) dispatch(line, handler);
+            const bool complete = used != 0;
             used = 0;
+            if (complete) dispatch(line, handler);
             continue;
         }
         if (used + 1 < sizeof(line)) line[used++] = value;

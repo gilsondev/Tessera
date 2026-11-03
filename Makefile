@@ -117,3 +117,15 @@ push-agentd: pack-agentd ## Pack agentd para SD / portal (PUT /agentd/agentd.tgz
 	@echo "      (grava também tessera/agentd.tgz flat — o que o portal serve)"
 	@echo "    Instalar neste Mac: make agent-install"
 	@echo "    Portal: PUT /agentd/agentd.tgz (com agent_push armado) ou upload na página Agente"
+
+.PHONY: e2e-browser e2e-device
+
+e2e-browser: ## Browser journeys against tools/e2e/serve.py (synthetic IPC)
+	browser-harness < $(ROOT)/tools/e2e/browser_journeys.py
+
+e2e-device: ## Real panel touch/USB journeys; restores companion after test
+	$(ROOT)/.venv/bin/python $(ROOT)/tools/e2e/device_journeys.py
+
+.PHONY: e2e-clock
+e2e-clock: ## Screensaver cadence under real USB artwork load (65 seconds)
+	$(ROOT)/.venv/bin/python $(ROOT)/tools/e2e/clock_device.py

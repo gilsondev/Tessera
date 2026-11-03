@@ -1,4 +1,5 @@
 import {
+  calendarRequest,
   fetchStatus,
   fetchDoctor,
   fetchLogs,
@@ -43,6 +44,45 @@ const WIDGET_NAV_SUB = {
 let weatherPick = null;
 let weatherSuggestTimer = 0;
 
+// Immediate feedback, serialized saves and last-click-wins semantics.
+const switchSaves = new Map();
+let settingsRevision = 0;
+function switchKey(button) {
+  for (const key of ["capToggle","panelToggle","panelAi","updateAuto"]) if (key in button.dataset) return `${key}:${button.dataset[key]}`;
+  return "unknown";
+}
+function paintSwitch(button, value) {
+  if (!button) return;
+  const pending = switchSaves.get(switchKey(button));
+  const on = pending ? pending.wanted : !!value;
+  button.classList.toggle("on",on); button.setAttribute("aria-pressed",String(on));
+}
+function saveSwitch(button, send, done) {
+  settingsRevision += 1;
+  const key = switchKey(button);
+  const wanted = !button.classList.contains("on");
+  let entry = switchSaves.get(key);
+  if (entry) { entry.wanted=wanted; paintSwitch(button,wanted); return; }
+  entry={wanted,confirmed:!wanted}; switchSaves.set(key,entry);
+  paintSwitch(button,wanted); button.setAttribute("aria-busy","true");
+  const status = document.getElementById("save-status");
+  const waiting = setTimeout(() => { status.textContent="Salvando alteração…"; status.hidden=false; },300);
+  void (async () => {
+    let response;
+    try {
+      do {
+        const value=entry.wanted;
+        response=await send(value); entry.confirmed=value;
+      } while (entry.wanted!==entry.confirmed);
+      switchSaves.delete(key); paintSwitch(button,entry.confirmed);
+      if (!switchSaves.size) status.hidden=true; if (done) done(response);
+    } catch {
+      switchSaves.delete(key); paintSwitch(button,entry.confirmed);
+      status.textContent="Não foi possível salvar. A alteração foi desfeita; tente novamente."; status.hidden=false;
+    } finally { clearTimeout(waiting); button.removeAttribute("aria-busy"); }
+  })();
+}
+
 const STATUS_POLL_MS = 2000;
 const LOG_POLL_MS = 4000;
 let statusPollId = null;
@@ -58,7 +98,7 @@ const SCAN_META = {
   codex: { title: "Codex / ChatGPT", detail: "Cotas Codex / ChatGPT neste Mac" },
   media: { title: "Música", detail: "Spotify ou Apple Music neste Mac" },
   focus: { title: "Focus", detail: "Modos de concentração do macOS" },
-  calendar: { title: "Agenda", detail: "Próximos eventos (Google Calendar)" },
+  calendar: { title: "Agenda", detail: "Próximos eventos (Calendário do macOS)" },
 };
 
 const screens = [
@@ -67,14 +107,15 @@ const screens = [
   { id: "scan-result", title: "O que achamos", label: "Achados", tab: null },
   { id: "setup", title: "Autorizações", label: "Autorizar", tab: null },
   { id: "setup-cable", title: "Ligar o painel", label: "Cabo", tab: null },
+  { id: "calendar", title: "Calendários do Mac", tab: "mac" },
   { id: "home", title: "Início", label: "Início", tab: "home" },
   { id: "panel", title: "Painel", label: "Painel", tab: "panel" },
   { id: "widgets", title: "Widgets", label: "Widgets", tab: "widgets" },
-  { id: "mac", title: "No Mac", label: "No Mac", tab: "mac" },
-  { id: "machines", title: "Computadores", label: "PCs", tab: "machines" },
-  { id: "activity", title: "Atividade", label: "Atividade", tab: "activity" },
-  { id: "doctor", title: "Doctor", label: "Doctor", tab: "activity" },
-  { id: "more", title: "Mais", label: "Mais", tab: "more" },
+  { id: "mac", title: "Integrações", label: "Integrações", tab: "mac" },
+  { id: "machines", title: "Computadores", label: "PCs", tab: "more" },
+  { id: "activity", title: "Atividade", label: "Atividade", tab: "more" },
+  { id: "doctor", title: "Diagnóstico", label: "Diagnóstico", tab: "more" },
+  { id: "more", title: "Ajuda e app", label: "Ajuda e app", tab: "more" },
   { id: "problem", title: "Desconectado", label: "Problema", tab: "home" },
 ];
 
@@ -328,7 +369,7 @@ async function persistScanChoices({ setupCompleted, displayName } = {}) {
   const toggles = collectScanToggles();
   const body = {};
   // Never send found:[] — that used to disable every capability on the daemon.
-  if (toggles.length) body.found = toggles;
+  if (toggles.length && !displayName) body.found = toggles;
   if (setupCompleted != null) body.setup_completed = setupCompleted;
   if (displayName) body.display_name = displayName;
   const result = await postScan(body);
@@ -541,7 +582,7 @@ function applyAgentdOffline() {
     homeBanner.hidden = false;
     setBannerVariant(homeBanner, "err");
     homeBanner.querySelector('[data-live="home-status-title"]').textContent =
-      "Companion desligado";
+      "Agente indisponível";
     homeBanner.querySelector('[data-live="home-status-sub"]').textContent =
       "Sem o Tessera em segundo plano não dá para saber se o painel está no cabo.";
   }
@@ -564,7 +605,7 @@ function applyAgentdOnline(status) {
   if (greetSub) {
     greetSub.textContent = usbUp
       ? "Música, Focus e cotas sincronizam com o painel."
-      : "Companion ok — conecte o USB para sincronizar.";
+      : "Agente conectado — conecte o USB para sincronizar.";
   }
 
   // Pill já mostra o USB; banner só quando precisa de ação.
@@ -600,8 +641,7 @@ async function refreshHomeCaps() {
 function setCapToggle(id, on, detail) {
   const btn = document.querySelector(`[data-cap-toggle="${id}"]`);
   if (btn) {
-    btn.classList.toggle("on", !!on);
-    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    paintSwitch(btn,on);
   }
   const sub = document.querySelector(`[data-live="mac-${id}-sub"]`);
   if (sub && detail) sub.textContent = detail;
@@ -612,8 +652,7 @@ function paintUpdateStatus(st) {
   const tog = document.querySelector("[data-update-auto]");
   if (tog) {
     const on = !!st?.auto_update;
-    tog.classList.toggle("on", on);
-    tog.setAttribute("aria-pressed", on ? "true" : "false");
+    paintSwitch(tog,on);
   }
   if (!sub) return;
   const cur = st?.current_version || "?";
@@ -631,9 +670,12 @@ function paintUpdateStatus(st) {
 }
 
 async function refreshUpdateRow() {
+  if (switchSaves.size) return;
+  const revision = settingsRevision;
   if (visibleScreenId() !== "more") return;
   try {
     const st = await fetchUpdate();
+    if (revision !== settingsRevision || switchSaves.size) return;
     paintUpdateStatus(st);
   } catch {
     const sub = document.querySelector('[data-live="update-sub"]');
@@ -642,35 +684,35 @@ async function refreshUpdateRow() {
 }
 
 async function refreshMacScreen() {
+  if (switchSaves.size) return;
+  const revision = settingsRevision;
   if (visibleScreenId() !== "mac") return;
   try {
-    const [scan, { report }] = await Promise.all([fetchScanLast(), fetchDoctor()]);
+    const scan = await fetchScanLast();
+    if (revision !== settingsRevision || switchSaves.size) return;
     const found = scan?.found ?? [];
     const item = (id) => found.find((f) => f.id === id);
     const media = item("media");
     const focus = item("focus");
     const calendar = item("calendar");
 
-    const musicCheck = report?.checks?.find((c) => c.id === "music");
-    const focusCheck = report?.checks?.find((c) => c.id === "focus");
 
     setCapToggle(
       "media",
       !!media?.enabled && media.state !== "missing",
-      musicCheck?.detail ||
-        (media?.state === "ready"
+      (media?.state === "ready"
           ? "Spotify ou Apple Music detectado"
           : "Nenhum app de música encontrado"),
     );
     setCapToggle(
       "focus",
       !!focus?.enabled && focus.state !== "missing",
-      focusCheck?.detail || "Modo de concentração do macOS",
+      "Modo de concentração do macOS",
     );
     setCapToggle(
       "calendar",
       !!calendar?.enabled && calendar.state !== "missing",
-      "Próximos eventos (Google Calendar)",
+      "Próximos eventos (Calendário do macOS)",
     );
 
     for (const id of ["cursor", "claude", "codex"]) {
@@ -853,14 +895,9 @@ function paintAiToggles(state) {
     const on = typeof ds[key] === "boolean" ? ds[key] : true;
     const btn = document.querySelector(`[data-panel-ai="${key}"]`);
     if (btn) {
-      btn.classList.toggle("on", on);
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      paintSwitch(btn,on);
     }
-    const cap = document.querySelector(`[data-cap-toggle="${capId}"]`);
-    if (cap && !cap.disabled) {
-      cap.classList.toggle("on", on);
-      cap.setAttribute("aria-pressed", on ? "true" : "false");
-    }
+
   });
 }
 
@@ -881,10 +918,10 @@ function paintCalendarList(state) {
   if (!box) return;
   const cal = state?.calendar || {};
   const rows = (cal.calendars || []).filter(
-    (r) => r && r.id && String(r.account || "").includes("@"),
+    (r) => r && r.id,
   );
   if (!rows.length) {
-    box.innerHTML = `<p class="note">Nenhum calendário ainda. Adicione uma conta Google.</p>`;
+    box.innerHTML = `<p class="note">Permita Calendários no Agente para escolher o que mostrar.</p>`;
     return;
   }
   const by = {};
@@ -1002,12 +1039,12 @@ function applyWidgetsScreen(state) {
   const calNote = document.querySelector('[data-live="widgets-calendar-note"]');
   if (calNote) {
     const cal = state.calendar || {};
-    if (cal.auth_pending) calNote.textContent = "Autorize no browser do Mac.";
+    if (cal.auth_pending) calNote.textContent = "Confirme a permissão de Calendários no Mac.";
     else if (cal.linked)
       calNote.textContent = cal.ready
-        ? "Contas ligadas · eventos ok."
+        ? "Calendários do Mac · eventos atualizados."
         : "Contas ligadas · aguardando eventos.";
-    else calNote.textContent = "Nenhuma conta ainda — toque em Adicionar conta.";
+    else calNote.textContent = "Permita Calendários na aba Integrações do Agente.";
   }
   const mediaStatus = document.querySelector('[data-live="widgets-media-status"]');
   if (mediaStatus) {
@@ -1022,9 +1059,12 @@ function applyWidgetsScreen(state) {
 }
 
 async function refreshWidgetsScreen() {
+  if (switchSaves.size) return;
+  const revision = settingsRevision;
   if (visibleScreenId() !== "widgets") return;
   try {
     const state = await fetchPanelState();
+    if (revision !== settingsRevision || switchSaves.size) return;
     applyWidgetsScreen(state);
   } catch (err) {
     applyWidgetsScreen({
@@ -1034,35 +1074,6 @@ async function refreshWidgetsScreen() {
       widgets: [],
     });
   }
-}
-
-async function persistMacCaps() {
-  const on = (id) =>
-    document.querySelector(`[data-cap-toggle="${id}"]`)?.classList.contains("on");
-  const body = {
-    found: [
-      { id: "media", enabled: !!on("media") },
-      { id: "focus", enabled: !!on("focus") },
-      { id: "calendar", enabled: !!on("calendar") },
-      { id: "cursor", enabled: !!on("cursor") },
-      { id: "claude", enabled: !!on("claude") },
-      { id: "codex", enabled: !!on("codex") },
-    ],
-  };
-  await postScan(body);
-  // Cotas No Mac ↔ fontes no widget AI Tokens (painel).
-  try {
-    await postPanelSettings({
-      show_aitokens_cursor: !!on("cursor"),
-      show_aitokens_claude: !!on("claude"),
-      show_aitokens_codex: !!on("codex"),
-    });
-  } catch {
-    /* painel offline — coleta Mac já salva */
-  }
-  await refreshMacScreen();
-  await refreshHomeCaps();
-  if (visibleScreenId() === "widgets") void refreshWidgetsScreen();
 }
 
 function renderActivityChecks(checks) {
@@ -1168,6 +1179,7 @@ async function refreshLiveStatus({ homeOnly = false } = {}) {
       applyMachineName(status);
     }
   } catch {
+    lastStatus = null;
     if (onHome) applyAgentdOffline();
     else applyUsbPill("err", "Painel: desconhecido");
   }
@@ -1195,7 +1207,10 @@ function ensurePolls() {
   const id = visibleScreenId();
   void refreshLiveStatus();
 
-  if (id === "doctor") {
+  if (id === "calendar") {
+    void refreshCalendar();
+    statusPollId = setInterval(() => { void refreshCalendar(); }, STATUS_POLL_MS);
+  } else if (id === "doctor") {
     refreshDoctorScreen();
     statusPollId = setInterval(() => {
       void refreshLiveStatus();
@@ -1356,8 +1371,7 @@ function applyPanelState(state) {
 
   const sound = document.querySelector("[data-panel-toggle='sound']");
   if (sound) {
-    sound.classList.toggle("on", !!s.sound);
-    sound.setAttribute("aria-pressed", s.sound ? "true" : "false");
+    paintSwitch(sound,s.sound);
   }
 
   const rest = document.querySelector("[data-panel-rest]");
@@ -1374,9 +1388,12 @@ function applyPanelState(state) {
 }
 
 async function refreshPanelScreen() {
+  if (switchSaves.size) return;
+  const revision = settingsRevision;
   if (visibleScreenId() !== "panel") return;
   try {
     const state = await fetchPanelState();
+    if (revision !== settingsRevision || switchSaves.size) return;
     applyPanelState(state);
   } catch (err) {
     applyPanelState({
@@ -1400,18 +1417,73 @@ async function runScanIfNeeded(id) {
       if (visibleScreenId() === "scan") go("scan-result");
     }, 900);
   } catch {
-    /* offline — stay on scan; user can cancel */
+    const hint = document.querySelector('[data-live="scan-error"]');
+    if (hint) hint.innerHTML = 'Não foi possível encontrar o Agente. Abra o Tessera e <button class="btn ghost" data-go="scan">tente novamente</button>.';
   }
 }
 
+
+let calendarBusy = false;
+let calendarReturn = "mac";
+let calendarLast = null;
+async function refreshCalendar() {
+  if (calendarBusy) return;
+  try { renderCalendar(await calendarRequest()); }
+  catch { document.querySelector('[data-live="calendar-status"]').textContent = "Agente indisponível. Abra o Tessera e tente novamente."; }
+}
+function renderCalendar(state) {
+  calendarLast = state;
+  const granted = state.permission === "authorized";
+  const permissionCard = document.getElementById("calendar-permission");
+  permissionCard.querySelector("h3").textContent = granted ? "Acesso a Calendários permitido" : "1. Permita a leitura no Mac";
+  permissionCard.querySelector(".sub").hidden = granted;
+  document.querySelector("[data-calendar-settings]").hidden = !["denied","restricted"].includes(state.permission);
+  document.getElementById("calendar-client-step").hidden = true;
+  const button = document.querySelector('[data-action="calendar-connect"]');
+  button.hidden = granted;
+  button.disabled = !state.configured || !!state.pending;
+  button.textContent = state.pending ? "Aguardando permissão…" : state.linked ? "Conferir permissão" : "Permitir Calendários";
+  document.querySelector('[data-live="calendar-status"]').textContent = state.message || "Permita Calendários no Mac e escolha o que mostrar.";
+  const choices = document.querySelector('[data-live="calendar-choices"]');
+  // Do not replace focused controls while a user is choosing calendars.
+  if (!granted || !choices.contains(document.activeElement)) choices.innerHTML = (state.calendars || []).map(row => `<label class="cap"><div class="copy"><b>${escapeHtml(row.name || row.id)}</b><span>${escapeHtml(row.account)}</span></div><input type="checkbox" aria-label="${escapeHtml(row.name || row.id)} · ${escapeHtml(row.account)}" data-calendar-choice="${escapeHtml(row.id)}" ${row.selected ? "checked" : ""}></label>`).join("") || '<p class="note">Seus calendários aparecem aqui após a autorização.</p>';
+}
+async function calendarAction(button, action) {
+  if (calendarBusy) return;
+  calendarBusy = true;
+  document.querySelectorAll("[data-calendar-choice]").forEach(i => i.disabled = true);
+  if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); }
+  try { renderCalendar(await action()); }
+  catch (err) { document.querySelector('[data-live="calendar-status"]').textContent = String(err.message || err); }
+  finally { calendarBusy = false; document.querySelectorAll("[data-calendar-choice]").forEach(i => i.disabled = false); if (button) { button.removeAttribute("aria-busy"); button.disabled = !!calendarLast?.pending; } }
+}
+document.addEventListener("change", async e => {
+  if (e.target.matches("[data-calendar-choice]")) {
+    const ids = [...document.querySelectorAll("[data-calendar-choice]:checked")].map(i => i.dataset.calendarChoice);
+    await calendarAction(e.target, () => calendarRequest("/selection", ids));
+  }
+});
+setInterval(() => {
+  if (visibleScreenId() !== "setup-cable") return;
+  const up = isUsbUp(lastStatus);
+  document.querySelector('[data-live="cable-title"]').textContent = up ? "Painel conectado" : "Procurando o painel…";
+  document.querySelector('[data-live="cable-state"]').textContent = up ? "USB conectado" : "Aguardando USB";
+  document.querySelector('[data-action="finish-setup"]').disabled = !up;
+}, 500);
 function go(id) {
-  const meta = screens.find((s) => s.id === id) || screens.find((s) => s.id === "welcome");
+  if (id === "calendar" && visibleScreenId() !== "calendar") calendarReturn = visibleScreenId() || "mac";
+  const meta = screens.find((s) => s.id === id) || screens.find((s) => s.id === "home");
+  id = meta.id;
   document.querySelectorAll(".screen").forEach((el) => {
     el.classList.toggle("on", el.dataset.screen === id);
   });
   tabs.querySelectorAll("button").forEach((b) => {
     b.classList.toggle("on", meta.tab && b.dataset.go === meta.tab);
   });
+  tabs.hidden = ["welcome", "scan", "scan-result", "setup", "setup-cable"].includes(id);
+  document.querySelector(".body").scrollTop = 0;
+  tabs.querySelectorAll("button").forEach(b => b.setAttribute("aria-current", b.classList.contains("on") ? "page" : "false"));
+  if (id === "calendar") void refreshCalendar();
   if (title) title.textContent = meta.title;
   document.title = `Tessera — ${meta.title}`;
   history.replaceState(null, "", "#" + id);
@@ -1420,6 +1492,25 @@ function go(id) {
 }
 
 document.body.addEventListener("click", (e) => {
+  const external = e.target.closest('a[href^="http://"], a[href^="https://"]');
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (external && typeof invoke === "function") {
+    e.preventDefault();
+    void invoke("open_external_url", { url: external.href }).catch(err => window.alert(String(err)));
+    return;
+  }
+  const calendarBack = e.target.closest("[data-action=calendar-back]");
+  if (calendarBack) { e.preventDefault(); go(calendarReturn); return; }
+  const connect = e.target.closest('[data-action="calendar-connect"]');
+  if (connect) { e.preventDefault(); void calendarAction(connect, () => calendarRequest("/connect", {})); return; }
+  const finish = e.target.closest('[data-action="finish-setup"], [data-action="finish-later"]');
+  if (finish) {
+    e.preventDefault();
+    if (finish.dataset.action === "finish-setup" && !isUsbUp(lastStatus)) return;
+    finish.disabled = true;
+    void persistScanChoices({ setupCompleted: true }).then(() => go("home")).catch(() => { finish.disabled = false; });
+    return;
+  }
   const openSettings = e.target.closest("[data-open-settings]");
   if (openSettings) {
     e.preventDefault();
@@ -1456,18 +1547,7 @@ document.body.addEventListener("click", (e) => {
   }
   const updateAuto = e.target.closest("[data-update-auto]");
   if (updateAuto) {
-    e.preventDefault();
-    const next = !updateAuto.classList.contains("on");
-    updateAuto.classList.toggle("on", next);
-    updateAuto.setAttribute("aria-pressed", next ? "true" : "false");
-    void postUpdate({ auto_update: next })
-      .then(paintUpdateStatus)
-      .catch((err) => {
-        updateAuto.classList.toggle("on", !next);
-        updateAuto.setAttribute("aria-pressed", !next ? "true" : "false");
-        window.alert(String(err?.message ?? err));
-      });
-    return;
+    e.preventDefault(); saveSwitch(updateAuto,value=>postUpdate({auto_update:value}),paintUpdateStatus); return;
   }
   const updateCheck = e.target.closest("[data-action='update-check']");
   if (updateCheck) {
@@ -1483,14 +1563,9 @@ document.body.addEventListener("click", (e) => {
   }
   const capToggle = e.target.closest("[data-cap-toggle]");
   if (capToggle) {
-    e.preventDefault();
-    if (capToggle.disabled) return;
-    capToggle.classList.toggle("on");
-    capToggle.setAttribute(
-      "aria-pressed",
-      capToggle.classList.contains("on") ? "true" : "false",
-    );
-    void persistMacCaps().catch((err) => window.alert(String(err?.message ?? err)));
+    e.preventDefault(); if (capToggle.disabled) return;
+    const id=capToggle.dataset.capToggle;
+    saveSwitch(capToggle,value=>postScan({found:[{id,enabled:value}]}),result=>{lastScan=result;});
     return;
   }
   const widgetToggle = e.target.closest("[data-widget-toggle]");
@@ -1565,48 +1640,8 @@ document.body.addEventListener("click", (e) => {
   }
   const panelAi = e.target.closest("[data-panel-ai]");
   if (panelAi) {
-    e.preventDefault();
-    const key = panelAi.dataset.panelAi;
-    const next = !panelAi.classList.contains("on");
-    panelAi.classList.toggle("on", next);
-    panelAi.setAttribute("aria-pressed", next ? "true" : "false");
-    const capId =
-      key === "show_aitokens_codex"
-        ? "codex"
-        : key === "show_aitokens_claude"
-          ? "claude"
-          : key === "show_aitokens_cursor"
-            ? "cursor"
-            : "";
-    void postPanelSettings({ [key]: next })
-      .then(async (state) => {
-        applyWidgetsScreen(state);
-        if (capId) {
-          const cap = document.querySelector(`[data-cap-toggle="${capId}"]`);
-          if (cap) {
-            cap.classList.toggle("on", next);
-            cap.setAttribute("aria-pressed", next ? "true" : "false");
-          }
-          try {
-            await postScan({
-              found: [{ id: capId, enabled: next }],
-            });
-            await refreshMacScreen();
-            await refreshHomeCaps();
-          } catch {
-            /* companion offline */
-          }
-        }
-      })
-      .catch((err) => {
-        panelAi.classList.toggle("on", !next);
-        panelAi.setAttribute("aria-pressed", !next ? "true" : "false");
-        window.alert(
-          String(err?.message ?? err) +
-            "\n\nLigue o cabo ou a rede do painel para salvar.",
-        );
-      });
-    return;
+    e.preventDefault(); const key=panelAi.dataset.panelAi;
+    saveSwitch(panelAi,value=>postPanelSettings({[key]:value}),applyWidgetsScreen); return;
   }
   const saveTodoist = e.target.closest("[data-action='save-todoist-token']");
   if (saveTodoist) {
@@ -1763,20 +1798,9 @@ document.body.addEventListener("click", (e) => {
       });
     return;
   }
-  const panelToggle = e.target.closest("[data-panel-toggle='sound']");
+  const panelToggle = e.target.closest("[data-panel-toggle]");
   if (panelToggle) {
-    e.preventDefault();
-    const next = !panelToggle.classList.contains("on");
-    panelToggle.classList.toggle("on", next);
-    panelToggle.setAttribute("aria-pressed", next ? "true" : "false");
-    void postPanelSettings({ sound: next })
-      .then(applyPanelState)
-      .catch((err) => {
-        panelToggle.classList.toggle("on", !next);
-        panelToggle.setAttribute("aria-pressed", !next ? "true" : "false");
-        window.alert(String(err?.message ?? err));
-      });
-    return;
+    e.preventDefault(); saveSwitch(panelToggle,value=>postPanelSettings({sound:value}),applyPanelState); return;
   }
   const panelRefresh = e.target.closest("[data-action='panel-refresh']");
   if (panelRefresh) {
@@ -1808,8 +1832,9 @@ document.body.addEventListener("click", (e) => {
   const scanSetup = e.target.closest("[data-action='scan-continue-setup']");
   if (scanSetup) {
     e.preventDefault();
-    void persistScanChoices({ setupCompleted: false })
-      .then(() => go("setup"))
+    const alreadyConfigured = !!lastStatus?.setup_completed;
+    void persistScanChoices({ setupCompleted: alreadyConfigured })
+      .then(() => go(alreadyConfigured ? "doctor" : "setup"))
       .catch((err) => window.alert(String(err?.message ?? err)));
     return;
   }
@@ -1847,7 +1872,7 @@ document.body.addEventListener("click", (e) => {
   if (help) {
     e.preventDefault();
     window.alert(
-      "O companion em segundo plano (Tessera) precisa estar rodando.\n\nSe instalou pelo cartão SD, rode de novo o install.command.\nOu, em desenvolvimento: mise run agentd-run\n\nDepois toque em Tentar de novo.",
+      "O Agente em segundo plano precisa estar rodando.\n\nAbra Tessera em Aplicativos. Se necessário, reinstale pelo site do projeto.\n\nDepois toque em Tentar de novo.",
     );
     return;
   }

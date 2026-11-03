@@ -6,6 +6,9 @@
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 void setup() {
+    // HWCDC defaults to 256 bytes and drops bytes while LVGL renders a frame.
+    // Hold artwork bursts until the bounded console pump can consume them.
+    Serial.setRxBufferSize(16 * 1024);
     Serial.begin(115200);
     const esp_reset_reason_t rr = esp_reset_reason();
     const char *why = "other";

@@ -1,6 +1,7 @@
 #include "ui/brand_mark.h"
 #include "ui/tile_icons.h"
 #include "ui/home.h"
+#include "ui/media_tile.h"
 
 #include "clock_summary.h"
 #include "domain/dashboard_layout.h"
@@ -442,13 +443,7 @@ void add_pair_tile(lv_obj_t **tile_out, lv_obj_t **icon_out, lv_obj_t **detail_o
 }
 
 void add_media_tile(lv_event_cb_t on_open) {
-    add_pair_tile(&media_tile, &media_icon, &media_detail, LV_SYMBOL_AUDIO, lv_color_hex(0xAF52DE), "Música",
-                  "Nada tocando", dashboard::id_media(), on_open);
-    // LED marquee — title scrolls left forever when it overflows the tile.
-    if (media_detail) {
-        lv_label_set_long_mode(media_detail, LV_LABEL_LONG_SCROLL_CIRCULAR);
-        lv_obj_set_style_anim_duration(media_detail, 4000, 0);
-    }
+    media_tile = ::media_home::create(stage, on_open, const_cast<char *>(dashboard::id_media()));
 }
 
 void add_mac_tile(lv_event_cb_t on_open) {
@@ -549,6 +544,7 @@ void home::rebuild(const dashboard::Layout &layout) {
         lv_obj_delete(calendar_tile);
         calendar_tile = nullptr;
     }
+    if (media_tile) { ::media_home::reset(); lv_obj_delete(media_tile); media_tile = nullptr; }
     if (pair) {
         lv_obj_delete(pair);
         pair = nullptr;
@@ -688,28 +684,7 @@ void home::set_summary(int total, bool pending) {
     set_if_changed(task_count, text);
 }
 
-void home::set_media(const media::View &view, bool agent_ok) {
-    if (!media_detail) return;
-    char text[72];
-    if (!agent_ok) {
-        snprintf(text, sizeof(text), "sem Agente");
-    } else if (!view.ready || !view.media.ok || view.media.state == media::MediaState::Stopped ||
-               !view.media.title[0]) {
-        snprintf(text, sizeof(text), "Nada tocando%s", view.stale ? " · desatualizado" : "");
-    } else if (view.media.artist[0]) {
-        snprintf(text, sizeof(text), "%s · %s%s%s", view.media.title, view.media.artist,
-                 view.media.state == media::MediaState::Paused ? " · pausado" : "",
-                 view.stale ? " · desatualizado" : "");
-    } else {
-        snprintf(text, sizeof(text), "%s%s%s", view.media.title,
-                 view.media.state == media::MediaState::Paused ? " · pausado" : "",
-                 view.stale ? " · desatualizado" : "");
-    }
-    set_if_changed(media_detail, text);
-    if (media_icon) {
-        lv_obj_set_style_text_color(media_icon, agent_ok ? lv_color_hex(0xAF52DE) : theme::error(), 0);
-    }
-}
+void home::set_media(const media::View &view, bool agent_ok) { ::media_home::paint(view, agent_ok); }
 
 void home::set_mac(const focus::View &view, bool agent_ok) {
     if (!mac_detail) return;
@@ -1031,6 +1006,7 @@ void home::set_aitokens(const aitokens::View &view) {
 }
 
 void home::apply_theme() {
+    ::media_home::apply_theme();
     if (!screen) return;
     lv_obj_set_style_bg_color(screen, theme::background(), 0);
     lv_obj_set_style_text_color(screen, theme::text_primary(), 0);

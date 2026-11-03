@@ -144,7 +144,7 @@ h1{font-size:30px}
 <button class="nav" type="button" data-go="todoist"><b>Todoist</b><span>Listas, token e intervalo</span></button>
 <button class="nav" type="button" data-go="clima"><b>Clima</b><span>Cidade deste widget</span></button>
 <button class="nav" type="button" data-go="aitokens"><b>AI Tokens</b><span>Fontes na home</span></button>
-<button class="nav" type="button" data-go="agenda"><b>Agenda</b><span>Google Calendar</span></button>
+<button class="nav" type="button" data-go="agenda"><b>Agenda</b><span>Calendários do Mac</span></button>
 </aside>
 <div class="pane">
 <button class="back" id="back" type="button">← Configurações</button>
@@ -176,12 +176,12 @@ h1{font-size:30px}
 </section>
 <section class="card" id="agent-install-box">
 <h2>Instalar no Mac</h2>
-<p class="note">No notebook pluggado: abra <a href="https://gilsondev.github.io/Tessara/" target="_blank" rel="noopener">gilsondev.github.io/Tessara</a> ou cole o comando abaixo. Depois o <b>Status</b> acima deve ir para OK.</p>
+<p class="note">No notebook pluggado: abra <a href="https://gilsondev.github.io/Tessera/" target="_blank" rel="noopener">gilsondev.github.io/Tessera</a> ou cole o comando abaixo. Depois o <b>Status</b> acima deve ir para OK.</p>
 <div class="cmd-row">
-<code id="agent-install-cmd">curl -fsSL https://gilsondev.github.io/Tessara/install.command | bash</code>
+<code id="agent-install-cmd">curl -fsSL https://gilsondev.github.io/Tessera/install.command | bash</code>
 <div class="actions" style="gap:8px;flex-wrap:wrap;margin-top:0">
 <button class="act" type="button" id="agent-copy-cmd">Copiar comando</button>
-<a class="act ghost" href="https://gilsondev.github.io/Tessara/" target="_blank" rel="noopener">Abrir o site</a>
+<a class="act ghost" href="https://gilsondev.github.io/Tessera/" target="_blank" rel="noopener">Abrir o site</a>
 </div>
 </div>
 </section>
@@ -208,11 +208,11 @@ h1{font-size:30px}
 </div>
 <div class="page" id="page-agenda">
 <section class="card"><h2>Agenda</h2>
-<p class="note" id="agenda-note">Contas Google via Agente Tessera (USB). Somente leitura.</p>
+<p class="note" id="agenda-note">Calendários já adicionados ao Mac, via Agente Tessera (USB). Somente leitura.</p>
 <p class="note" id="agenda-status">…</p>
-<p class="note" style="margin:8px 0 14px">Cada conta Google aparece num bloco. Marque só as agendas que o painel deve mostrar.</p>
+<p class="note" style="margin:8px 0 14px">Os calendários são agrupados pela origem no Mac. Marque apenas os que deseja mostrar no painel.</p>
 <div class="actions" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
-<button class="act" type="button" onclick="addCalendarAccount()">Adicionar conta</button>
+<button class="act" type="button" onclick="addCalendarAccount()">Permitir no Mac</button>
 <button class="act" type="button" onclick="post('/api/refresh',{},'Pedindo atualização')">Atualizar</button>
 </div>
 <div id="agenda-list"></div>
@@ -368,7 +368,7 @@ else t.push('nenhuma conta ligada');
 if(+cal.age_s>0)t.push('há '+(+cal.age_s<60?cal.age_s+' s':Math.floor(+cal.age_s/60)+' min'));
 st.textContent=t.join(' · ')}
 const box=document.getElementById('agenda-list');if(!box)return;box.innerHTML='';
-const rows=(cal.calendars||[]).filter(r=>r&&r.id&&String(r.account||'').includes('@'));
+const rows=(cal.calendars||[]).filter(r=>r&&r.id);
 if(!rows.length){box.innerHTML='<p class="note">Nenhum calendário ainda. Adicione uma conta.</p>';return}
 const by={};const order=[];
 rows.forEach(r=>{const a=r.account;if(!by[a]){by[a]=[];order.push(a)}by[a].push(r)});
@@ -386,7 +386,7 @@ lab.appendChild(sw);lab.appendChild(inp);list.appendChild(lab)});
 sec.appendChild(list);box.appendChild(sec)})}
 function saveAgendaSelection(){const ids=[...document.querySelectorAll('#agenda-list input[data-cal-id]:checked')].map(i=>i.dataset.calId);
 post('/api/calendar/selection',{selection:ids.join(',')},'Calendários salvos')}
-function addCalendarAccount(){post('/api/calendar/add_account',{},'Abrindo autorização no Mac…')}
+function addCalendarAccount(){post('/api/calendar/add_account',{},'Confirme o acesso a Calendários no Mac')}
 function fmtBytes(n){n=+n||0;if(n>=1073741824)return(n/1073741824).toFixed(1).replace('.',',')+' GB';
 if(n>=1048576)return(n/1048576).toFixed(1).replace('.',',')+' MB';
 if(n>=1024)return(n/1024).toFixed(1).replace('.',',')+' KB';return n+' B'}
@@ -473,7 +473,7 @@ if(ap){ap.textContent=s.agent_pack
 ?(s.agent_pack_version?('Pacote no SD: '+s.agent_pack_version+' (fallback offline)'):'Pacote no SD: presente (fallback offline)')
 :'Pacote no SD: ausente (ok — use o site)';ap.className=s.agent_pack?'ok':'off'}
 const cmdEl=document.getElementById('agent-install-cmd');
-if(cmdEl){cmdEl.textContent='curl -fsSL https://gilsondev.github.io/Tessara/install.command | bash'}
+if(cmdEl){cmdEl.textContent='curl -fsSL https://gilsondev.github.io/Tessera/install.command | bash'}
 draw();drawResources();pushOsTheme(false)}
 async function putFile(url,file){const r=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:file});
 if(!r.ok){const t=await r.text();throw new Error(t||('HTTP '+r.status))}return r}
@@ -483,7 +483,7 @@ toast('Enviando…');
 try{await putFile('/agentd/agentd.tgz',tgz);
 toast('Pacote no SD (fallback). Preferir o site Pages.');setTimeout(load,400)}catch(e){toast(e&&e.message?e.message:'Falha no upload')}}
 async function copyInstallCmd(){
-const text='curl -fsSL https://gilsondev.github.io/Tessara/install.command | bash';
+const text='curl -fsSL https://gilsondev.github.io/Tessera/install.command | bash';
 try{await navigator.clipboard.writeText(text);toast('Comando copiado — cole no Terminal e olhe o Status')}
 catch(e){toast('Selecione o comando e copie (⌘C)')}
 }

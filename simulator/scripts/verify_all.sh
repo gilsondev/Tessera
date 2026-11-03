@@ -19,7 +19,7 @@ test -x "$PAINEL"
 
 echo "==> scenario screenshots + compose asserts"
 SCENARIOS=(
-  normal offline sem_local sem_bateria widgets_no_weather widgets_with_clock widgets_with_hero weather_loading
+  normal showcase offline sem_local sem_bateria widgets_no_weather widgets_with_clock widgets_with_hero weather_loading
   cold_offline weather_timeout invalid_payload stale_cache
 )
 for name in "${SCENARIOS[@]}"; do
@@ -34,6 +34,9 @@ for name in "${SCENARIOS[@]}"; do
   test -s "$OUT/$name.bmp"
 done
 
+echo "==> screensaver timing regression"
+SDL_VIDEODRIVER=dummy "$PAINEL" --fixtures "$SIM/fixtures" --clock-check --screenshot "$OUT/screensaver.bmp" --headless | tee "$OUT/screensaver-timing.log"
+
 echo "==> rotation (landscape) smoke"
 SDL_VIDEODRIVER=dummy "$PAINEL" \
   --fixtures "$SIM/fixtures" \
@@ -45,7 +48,7 @@ SDL_VIDEODRIVER=dummy "$PAINEL" \
 test -s "$OUT/rotation-landscape.bmp"
 
 echo "==> detail screens (normal)"
-for screen in todoist weather aitokens calendar clock settings; do
+for screen in todoist weather aitokens calendar clock media focus settings; do
   echo "--- detail/$screen"
   SDL_VIDEODRIVER=dummy "$PAINEL" \
     --fixtures "$SIM/fixtures" \
@@ -79,6 +82,13 @@ grep -q 'clock_tile=1' "$OUT/widgets_with_hero.log"
 grep -q 'tiles=6' "$OUT/widgets_with_hero.log"
 grep -q 'wifi=0' "$OUT/offline.log"
 grep -q 'wifi=0' "$OUT/cold_offline.log"
+
+echo "==> user journeys (LVGL pointer input + assertions)"
+for journey in navigation music; do
+  screen=home
+  [ "$journey" != music ] || screen=media
+  SDL_VIDEODRIVER=dummy "$PAINEL" --fixtures "$SIM/fixtures" --scenario normal --screen "$screen" --headless --settings "$OUT/journey-$journey-settings" --journey "$SIM/journeys/$journey.txt" | tee "$OUT/journey-$journey.log"
+done
 
 echo "==> OK — artifacts in $OUT"
 ls -la "$OUT"
