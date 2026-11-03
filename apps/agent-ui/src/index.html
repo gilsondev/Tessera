@@ -500,6 +500,9 @@
 
         <!-- MORE -->
         <div class="screen" data-screen="more">
+          <section class="card"><h3>Agente neste Mac</h3><p>Instalação e recuperação do serviço que sincroniza com o painel.</p>
+          <p class="note" data-live="daemon-message" role="status"></p>
+          <div class="actions"><button data-daemon-action="install">Verificar instalação</button><button data-daemon-action="restart">Reiniciar Agente</button><button data-daemon-action="stop">Parar Agente</button><button data-daemon-action="start">Iniciar Agente</button><button data-daemon-action="panel-reboot">Reiniciar painel</button></div></section>
           <div class="hero">
             <h2>Ajuda e aplicativo</h2>
             <p>Atualização, perfis e remoção deste Mac.</p>
@@ -678,7 +681,7 @@
         </div>
 
         <!-- WELCOME -->
-        <div class="screen on" data-screen="welcome">
+        <div class="screen on" data-screen="welcome"><p class="note" role="status" data-live="install-progress" hidden></p>
           <div class="hero">
             <p class="eyebrow">Bem-vindo</p>
             <h2>Seu Mac, à vista no Tessera.</h2>

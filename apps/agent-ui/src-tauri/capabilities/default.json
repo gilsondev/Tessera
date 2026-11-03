@@ -2,10 +2,15 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Main window; fetch to agentd is allowed via CSP connect-src (127.0.0.1:19792 only).",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "opener:default",
-    "allow-open-privacy-settings"
+    "allow-open-privacy-settings",
+    "allow-agent-control",
+    "allow-agent-status-token",
+    "allow-external-links"
   ]
 }

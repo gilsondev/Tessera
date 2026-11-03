@@ -52,8 +52,8 @@ fi
 
 INSTALL_ROOT="$HOME/.tessera/agentd"
 BIN_DIR="$INSTALL_ROOT/bin"
-# App bundle so Privacy / FDA shows the Tessera icon (not a bare Terminal-like binary).
-AGENTD_APP="$INSTALL_ROOT/Tessera.app"
+# App bundle so Privacy / FDA shows Tessera Agent, not the menu-bar window.
+AGENTD_APP="$INSTALL_ROOT/Tessera Agent.app"
 AGENTD_MACOS="$AGENTD_APP/Contents/MacOS"
 AGENTD_RES="$AGENTD_APP/Contents/Resources"
 LABEL=com.tessera.agentd
@@ -121,14 +121,16 @@ if launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1 && [ -f "$PLIST" ]; the
 fi
 install -m 755 "$AGENTD_BIN" "$AGENTD_MACOS/$INSTALL_BIN_NAME"
 # Compat: bin/Tessera → app executable (scripts / old docs)
-ln -sfn "../Tessera.app/Contents/MacOS/$INSTALL_BIN_NAME" "$BIN_DIR/$INSTALL_BIN_NAME"
+ln -sfn "../Tessera Agent.app/Contents/MacOS/$INSTALL_BIN_NAME" "$BIN_DIR/$INSTALL_BIN_NAME"
 ln -sfn "$INSTALL_BIN_NAME" "$BIN_DIR/agentd"
 if [ -f "$ICNS_SRC" ]; then
   cp -f "$ICNS_SRC" "$AGENTD_RES/AppIcon.icns"
 else
   echo "cutover: aviso — sem $ICNS_SRC (ícone FDA pode ficar genérico)" >&2
 fi
-cat > "$AGENTD_APP/Contents/Info.plist" <<'PLIST'
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+AGENT_VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
+cat > "$AGENTD_APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -138,10 +140,10 @@ cat > "$AGENTD_APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIdentifier</key><string>com.tessera.agentd</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleName</key><string>Tessera</string>
-  <key>CFBundleDisplayName</key><string>Tessera</string>
+  <key>CFBundleName</key><string>Tessera Agent</string>
+  <key>CFBundleDisplayName</key><string>Tessera Agent</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>$AGENT_VERSION</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -243,7 +245,17 @@ fi
 echo "cutover: checking the installed background service…"
 deadline=$((SECONDS + 20))
 while [ "$SECONDS" -lt "$deadline" ]; do
-  if curl -sf --max-time 3 "http://127.0.0.1:${IPC_PORT}/v1/health" >/dev/null; then
+  if python3 - "$IPC_PORT" <<'PYHEALTH'
+import json, pathlib, sys, urllib.request
+try:
+    token = (pathlib.Path.home()/".tessera/agentd/ipc_token").read_text().strip()
+    request = urllib.request.Request(f"http://127.0.0.1:{sys.argv[1]}/v1/health", headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(request, timeout=3) as response:
+        sys.exit(0 if json.load(response).get("ok") else 1)
+except Exception:
+    sys.exit(1)
+PYHEALTH
+  then
     echo "cutover: installed. Open Tessera to choose integrations and grant permissions."
     echo "cutover: missing permissions do not mean installation failed."
     exit 0

@@ -117,7 +117,9 @@ void announce() {
     if (!status_label) return;
     char text[32] = "";
     int view = current.view;
-    switch (task_store::state(view)) {
+    if (task_page::lists_pending()) {
+        snprintf(text, sizeof(text), "carregando");
+    } else switch (task_store::state(view)) {
         case task_store::State::Ready: break;
         case task_store::State::Empty: snprintf(text, sizeof(text), "carregando"); break;
         case task_store::State::Failed: snprintf(text, sizeof(text), "falhou"); break;
@@ -186,6 +188,7 @@ void reset_sheet() {
 }
 
 void show_view(int view) {
+    if (!list || !sheet) return;
     reset_sheet();
     active = view;
     task_page::paint(current, view, on_mark);
@@ -317,7 +320,7 @@ void go_to(int view) {
     }
     sliding = true;
     pending_view = view;
-    select_tab(view, false);  // chip reacts immediately; scroll settles on land
+    select_tab(view, false);  // chip reacts at once; scroll settles on land
     build_strip(view);
     play_shift(view > active ? -page_width() : 0, landed);
 }
@@ -500,6 +503,8 @@ void render_preview(int view) {
 
 // Neighbours first, then the rest outward. Lists still loading keep their live spinner instead.
 bool preview_step() {
+    // A neighbour bitmap would show tasks while the live page is still the spinner.
+    if (task_page::lists_pending()) return false;
     int count = task_store::view_count();
     // The current list must be pre-rendered too, or slides mix live capture with neighbour previews.
     if (list && active >= 0 && active < count && lv_obj_get_scroll_y(list) == 0 &&
@@ -525,6 +530,11 @@ bool idle_gate_ok() { return !hooks.idle_allowed || hooks.idle_allowed(); }
 void idle_step(lv_timer_t *) {
     if (!root || busy() || !current.obj || !idle_gate_ok()) return;
     if (task_page::reap()) return;
+    // Spinner stands in until every list has arrived. Don't cache that placeholder.
+    if (current.hold_for_rest) {
+        if (!task_page::lists_pending()) repaint();
+        return;
+    }
     if (current.version != task_store::version(current.view)) {
         repaint();
         return;
@@ -688,7 +698,7 @@ void todoist_panel::set_views(int selected) {
 
 void todoist_panel::view_changed(int view) {
     (void)view;
-    // Chip counts update immediately. Page rebuild waits for idle_step so an agent
+    // Chip counts update at once. Page rebuild waits for idle_step so an agent
     // USB push never reset_sheet() mid-swipe (that made the horizontal drag feel broken).
     announce();
 }

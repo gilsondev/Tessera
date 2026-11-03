@@ -257,6 +257,18 @@
     font-size: 13px;
     line-height: 1.4;
   }
+  .card .sub.need {
+    background: var(--warn-bg);
+    color: var(--warn);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .card .sub.ok {
+    background: var(--ok-bg);
+    color: var(--ok);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
   .row {
     display: flex;
     align-items: center;
@@ -671,6 +683,19 @@
     }
   }
 
+  .action-feedback {
+    margin: 8px 20px 0;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 650;
+    background: var(--card);
+    border: 1px solid var(--line);
+  }
+  .action-feedback.busy { color: var(--muted); }
+  .action-feedback.ok { color: var(--ok); background: var(--ok-bg); border-color: transparent; }
+  .action-feedback.err { color: var(--err); background: var(--err-bg); border-color: transparent; }
+
   .btn {
     border: 0;
     border-radius: 10px;
@@ -681,6 +706,7 @@
     line-height: 1.2;
     cursor: pointer;
   }
+  .btn:disabled { opacity: .45; cursor: default; }
   .btn.primary { background: var(--teal); color: #fff; }
   .btn.primary:hover { background: var(--teal-press); }
   .btn.ghost {
@@ -732,6 +758,7 @@
   }
   .steps li.done .n { background: var(--ok-bg); color: var(--ok); }
   .steps li.now .n { background: var(--teal); color: #fff; }
+  .steps li.bad .n { background: var(--err-bg, #fde8e6); color: var(--err, #b42318); }
   .steps .copy { min-width: 0; }
   .steps b {
     display: block;
@@ -965,6 +992,18 @@
     margin-top: 8px;
   }
 
+  .card .actions {
+    margin-top: 0;
+  }
+  .control-row + .control-row {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+  }
+  .card .note {
+    margin-top: 12px;
+  }
+
   .note {
     margin: 0;
     font-size: 12px;
@@ -1109,6 +1148,10 @@
     background: var(--teal);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 18%, transparent);
   }
+  .scan-list div.bad { color: var(--err, #b42318); font-weight: 650; }
+  .scan-list div.bad::before { background: var(--err, #b42318); }
+  .scan-list div.bad { color: var(--err); font-weight: 650; }
+  .scan-list div.bad::before { background: var(--err); box-shadow: none; }
 
   .titlebar { display: none; }
   .body { flex: 1; overflow: auto; }

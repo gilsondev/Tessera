@@ -62,7 +62,7 @@ def main():
             if time.monotonic()-last_stats >= 1:
                 ser.write(b'REST stats\nAGENT\tv1\t1\n')
                 last_stats = time.monotonic()
-            time.sleep(.012)
+            time.sleep(.046)
         ser.timeout = .2
         log += command(ser, 'REST stats')
         log += command(ser, 'PERF')

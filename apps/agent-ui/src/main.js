@@ -1,5 +1,9 @@
 import {
   calendarRequest,
+  ensureAgentd,
+  agentdService,
+  postPanelReboot,
+  panelForceReset,
   fetchStatus,
   fetchDoctor,
   fetchLogs,
@@ -957,8 +961,8 @@ async function saveAgendaSelection() {
   const ids = [
     ...document.querySelectorAll('[data-live="widgets-calendar-list"] input[data-cal-id]:checked'),
   ].map((i) => i.dataset.calId);
-  const state = await postCalendarSelection(ids.join(","));
-  applyWidgetsScreen(state);
+  await postCalendarSelection(ids.join(","));
+  applyWidgetsScreen(await fetchPanelState());
 }
 
 function setSelectedWidget(id) {
@@ -1970,7 +1974,23 @@ document.body.addEventListener("change", (e) => {
   }
 });
 
+function paintInstallProgress(message) {
+  document.querySelectorAll('[data-live="daemon-message"], [data-live="install-progress"]').forEach(el => { el.hidden = false; el.textContent = message; });
+}
+window.__TAURI__?.event?.listen?.("agentd-install", event => paintInstallProgress(event.payload?.message || "Preparando o Agente…"));
+
 async function bootScreen() {
+  if (window.__TAURI__?.core?.invoke) {
+    try { await fetchStatus(); }
+    catch {
+      const message = document.querySelector('[data-live="daemon-message"]');
+      paintInstallProgress("Preparando o Agente neste Mac…");
+      try {
+        const result = await ensureAgentd();
+        paintInstallProgress(result.message || "Agente pronto.");
+      } catch (error) { if (message) message.textContent = String(error.message || error); }
+    }
+  }
   const hash = location.hash.replace("#", "");
   if (hash && screens.some((s) => s.id === hash)) {
     go(hash);
@@ -2056,3 +2076,22 @@ if (window.__TAURI__?.event?.listen) {
     }
   });
 }
+
+// Native service controls retain the newer trunk's install/restart capabilities.
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-daemon-action]");
+  if (!button) return;
+  const message = document.querySelector('[data-live="daemon-message"]');
+  button.disabled = true;
+  if (message) message.textContent = "Aguarde…";
+  try {
+    const action = button.dataset.daemonAction;
+    const result = action === "install" ? await ensureAgentd()
+      : action === "panel-reboot" ? await postPanelReboot()
+      : action === "panel-reset" ? await panelForceReset()
+      : await agentdService(action);
+    if (message) message.textContent = result.message || (result.ok === false ? "Não foi possível concluir. Abra Diagnóstico." : "Concluído.");
+    await refreshLiveStatus();
+  } catch (error) { if (message) message.textContent = String(error.message || error); }
+  finally { button.disabled = false; }
+});

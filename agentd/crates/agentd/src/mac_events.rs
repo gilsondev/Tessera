@@ -173,11 +173,12 @@ mod macos {
     }
 
     pub fn prefers_dark() -> bool {
-        let out = Command::new("defaults")
-            .args(["read", "-g", "AppleInterfaceStyle"])
-            .output();
+        let out = tessera_proc::command_output_timeout(
+            Command::new("defaults").args(["read", "-g", "AppleInterfaceStyle"]),
+            std::time::Duration::from_secs(2),
+        );
         match out {
-            Ok(o) if o.status.success() => {
+            Some(o) if o.status.success() => {
                 let s = String::from_utf8_lossy(&o.stdout);
                 s.trim().eq_ignore_ascii_case("Dark")
             }

@@ -15,7 +15,7 @@ lv_obj_t *label(lv_obj_t *parent, const char *value) {
     lv_obj_set_style_text_color(l, theme::text_secondary(), 0); return l;
 }
 }
-lv_obj_t *media_home::create(lv_obj_t *parent, lv_event_cb_t on_open, void *data) {
+lv_obj_t *make_media_card(lv_obj_t *parent, lv_event_cb_t on_open, void *data) {
     shown[0] = 0;
     card = kit::bare(parent); lv_obj_set_width(card, lv_pct(100)); lv_obj_set_height(card, 100);
     lv_obj_set_style_bg_color(card, theme::surface(), 0); lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
@@ -37,7 +37,7 @@ lv_obj_t *media_home::create(lv_obj_t *parent, lv_event_cb_t on_open, void *data
     artist = label(meta, "Música do Mac"); album = label(meta, "");
     return card;
 }
-void media_home::paint(const media::View &view, bool agent_ok) {
+void media_tile::set(const media::View &view, bool agent_ok) {
     if (!card) return;
     const bool playing = view.ready && view.media.ok && view.media.state != media::MediaState::Stopped;
     text(track, playing ? view.media.title : agent_ok ? "Nada tocando" : "Conecte o Mac por USB");
@@ -59,9 +59,9 @@ void media_home::paint(const media::View &view, bool agent_ok) {
     } else { lv_obj_add_flag(art,LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(placeholder,LV_OBJ_FLAG_HIDDEN); shown[0]=0; }
 }
 
-void media_home::reset() { card = art = placeholder = track = artist = album = nullptr; shown[0] = 0; }
+void media_tile::detach() { card = art = placeholder = track = artist = album = nullptr; shown[0] = 0; }
 
-void media_home::apply_theme() {
+void media_tile::apply_theme() {
     if (!card) return;
     lv_obj_set_style_bg_color(card,theme::surface(),0);
     lv_obj_set_style_border_color(card,theme::border(),0);
@@ -71,3 +71,6 @@ void media_home::apply_theme() {
     lv_obj_set_style_text_color(placeholder,theme::text_secondary(),0);
     lv_obj_set_style_bg_color(lv_obj_get_parent(art),theme::background(),0);
 }
+
+bool media_tile::claims(const char *id) { return id && !strcmp(id, "org.tessera.media"); }
+void media_tile::add(lv_obj_t *row, lv_event_cb_t on_open) { make_media_card(row, on_open, const_cast<char *>("org.tessera.media")); }

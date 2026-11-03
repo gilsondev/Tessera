@@ -376,6 +376,7 @@ void flip_digit(int index, char next, uint32_t delay_ms) {
         lv_anim_delete(flap_bot[index], nullptr);
         pending_new[index] = next;
         finish_digit(index);
+
         return;
     }
     if (cur == next) return;

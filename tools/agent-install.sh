@@ -7,8 +7,15 @@ set -euo pipefail
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Cursor and CI sandboxes sometimes point Cargo at a cache. The install paths
+# below are repo-relative, so the binaries have to land in agentd/target.
+unset CARGO_TARGET_DIR
+
 echo "agent-install: building agentd…"
 (cd agentd && cargo build --release -p agentd)
+
+echo "agent-install: bundling agentd into the app…"
+bash "$ROOT/tools/bundle_agentd.sh"
 
 echo "agent-install: building Tessera.app…"
 (cd apps/agent-ui && npm install --silent && npm run tauri build)
@@ -27,6 +34,8 @@ if [ -z "$APP" ]; then
   echo "agent-install: Tessera.app não encontrado após tauri build" >&2
   exit 1
 fi
+bash "$ROOT/tools/bundle_agentd_into_app.sh" "$APP" "$ROOT/agentd/target/release/Tessera"
+bash "$ROOT/tools/sign_macos_app.sh" "$APP"
 
 export TESSERA_PAUSE_AUTO_UPDATE=1
 export TESSERA_APP="$APP"

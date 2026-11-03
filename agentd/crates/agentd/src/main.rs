@@ -1,18 +1,27 @@
+mod claude_hook;
 mod ipc;
 mod logutil;
 mod mac_events;
 mod panel;
 mod update;
 mod usb_loop;
+mod watchdog;
 
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "Tessera", version, about = "Companion Tessera — sync Mac ↔ painel")]
+#[command(
+    name = "Tessera",
+    version,
+    about = "Companion Tessera — sync Mac ↔ painel"
+)]
 struct Args {
     /// Print AGENT handshake line and exit (for golden/CI)
     #[arg(long)]
     print_agent_line: bool,
+    /// Open the panel port, pulse DTR, exit. Used when the USB session is already dead.
+    #[arg(long)]
+    pulse_dtr: bool,
     /// Serial device path (e.g. /dev/cu.usbmodem*)
     #[arg(long)]
     port: Option<String>,
@@ -28,6 +37,28 @@ async fn main() {
         println!("{}", tessera_protocol::agent_ok_line());
         return;
     }
+    if args.pulse_dtr {
+        let path = args.port.clone().or_else(|| {
+            tessera_usb::list_candidate_ports()
+                .into_iter()
+                .next()
+                .map(|p| p.0)
+        });
+        let Some(path) = path else {
+            eprintln!("Tessera: nenhuma porta USB do painel");
+            std::process::exit(1);
+        };
+        match tessera_usb::pulse_dtr(&path) {
+            Ok(()) => {
+                eprintln!("Tessera: pulso DTR em {path}");
+                return;
+            }
+            Err(e) => {
+                eprintln!("Tessera: pulso DTR falhou em {path}: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
 
     let profile = match tessera_profile::load_or_init() {
         Ok(p) => p,
@@ -40,6 +71,30 @@ async fn main() {
         "agentd: machine {} ({})",
         profile.display_name, profile.machine_id
     );
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = std::path::PathBuf::from(home);
+        update::migrate_daemon_binary(&home);
+        let mut last = profile.config.aitokens && profile.config.aitokens_claude;
+        claude_hook::ensure(&home, last);
+        std::thread::spawn(move || {
+            let mut warned = false;
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                let read = tessera_profile::load_or_init()
+                    .map(|loaded| loaded.config.aitokens && loaded.config.aitokens_claude);
+                if let Err(err) = &read {
+                    if !warned {
+                        eprintln!("claude_hook: config ilegível ({err}); mantendo {last}");
+                        warned = true;
+                    }
+                } else {
+                    warned = false;
+                }
+                last = claude_hook::hook_enabled(last, read);
+                claude_hook::ensure(&home, last);
+            }
+        });
+    }
 
     if args.once {
         let port = match args.port {
@@ -88,9 +143,7 @@ async fn main() {
     } else {
         usb_loop::print_candidate_ports();
         let logs_usb = logs.clone();
-        std::thread::spawn(move || {
-            usb_loop::run_auto(profile_paths, Some(usb_link), logs_usb)
-        });
+        std::thread::spawn(move || usb_loop::run_auto(profile_paths, Some(usb_link), logs_usb));
     }
 
     if let Err(e) = ipc::run_ipc_server(app_state).await {

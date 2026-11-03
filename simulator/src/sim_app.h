@@ -9,6 +9,7 @@ namespace sim_app {
 
 enum class Screen { Home, Todoist, Weather, Aitokens, Calendar, Clock, Media, Focus, Settings };
 
+
 struct State {
     Scenario scenario;
     Screen screen = Screen::Home;

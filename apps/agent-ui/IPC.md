@@ -4,6 +4,8 @@ HTTP on `127.0.0.1` only. Port: `TESSERA_AGENTD_IPC_PORT` (default **19792**), o
 
 If agentd is offline or a route is missing, the UI shows an unavailable state. Production screens never substitute demonstration data.
 
+**Authentication:** the live API validates the loopback Host, the native Tauri Origin (when supplied), and `Authorization: Bearer <token>`. The private per-installation token lives at `~/.tessera/agentd/ipc_token`. Only the main native window may obtain it through the scoped `ipc_token` command. Synthetic browser fixtures run on 19793 and never read that credential.
+
 **Profile rule:** machine name, scan findings and capability toggles come from `~/.tessera/` via IPC. The UI must not invent roles (“Mac do trabalho”, etc.) — a clean install starts with `setup_completed=false` and fills the profile during welcome → scan → permissions.
 
 | Method | Path | Shape |

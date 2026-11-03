@@ -27,8 +27,30 @@ bool standalone_screen = false;
 media::View cached = {};
 bool cached_agent_ok = false;
 bool had_good_agent = false;
-lv_image_dsc_t cover_dsc = {};
+lv_image_dsc_t cover_dsc[2] = {};
+int cover_slot = 0;
 char cover_shown_key[media::kCoverKeyMax] = {};
+
+void bind_cover(lv_obj_t *img, const media::Cover &cover) {
+    const bool same = std::strcmp(cover_shown_key, cover.key) == 0 && cover_dsc[cover_slot].data == cover.rgb565;
+    if (same) return;
+    if (cover_dsc[0].data) lv_image_cache_drop(&cover_dsc[0]);
+    if (cover_dsc[1].data) lv_image_cache_drop(&cover_dsc[1]);
+    cover_slot ^= 1;
+    lv_image_dsc_t &dsc = cover_dsc[cover_slot];
+    dsc = {};
+    dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    dsc.header.w = cover.w;
+    dsc.header.h = cover.h;
+    dsc.header.stride = static_cast<uint16_t>(cover.w * 2);
+    dsc.data_size = media::kCoverBytes;
+    dsc.data = cover.rgb565;
+    lv_image_set_src(img, &dsc);
+    lv_obj_invalidate(img);
+    std::strncpy(cover_shown_key, cover.key, sizeof(cover_shown_key) - 1);
+    cover_shown_key[sizeof(cover_shown_key) - 1] = '\0';
+}
 
 void set_if(lv_obj_t *label, const char *text) {
     if (label && text && strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
@@ -78,21 +100,20 @@ void build_into(lv_obj_t *parent) {
     lv_obj_set_height(meta, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(meta, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(meta, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(meta, 8, 0);
+    lv_obj_set_style_pad_row(meta, 14, 0);
 
     // Large cover — matches MEDIA_COVER edge (200).
     cover_box = kit::bare(meta);
     lv_obj_set_size(cover_box, media::kCoverEdge, media::kCoverEdge);
     lv_obj_set_style_bg_color(cover_box, theme::surface(), 0);
     lv_obj_set_style_bg_opa(cover_box, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(cover_box, 14, 0);
-    lv_obj_set_style_clip_corner(cover_box, true, 0);
+    lv_obj_set_style_radius(cover_box, 12, 0);
     cover_placeholder = lv_label_create(cover_box);
     lv_label_set_text(cover_placeholder, LV_SYMBOL_AUDIO);
-    lv_obj_set_style_text_font(cover_placeholder, &lv_font_montserrat_40, 0);
     lv_obj_set_style_text_color(cover_placeholder, theme::text_secondary(), 0);
     lv_obj_center(cover_placeholder);
     cover_img = lv_image_create(cover_box);
+    lv_obj_center(cover_img);
     lv_obj_set_size(cover_img, media::kCoverEdge, media::kCoverEdge);
     lv_obj_add_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_radius(cover_img, 12, 0);
@@ -106,6 +127,13 @@ void build_into(lv_obj_t *parent) {
     lv_obj_set_style_text_font(track_label, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(track_label, theme::text_primary(), 0);
 
+    album_label = lv_label_create(meta);
+    lv_label_set_text(album_label, "");
+    lv_obj_set_style_text_font(album_label, &theme::small_font(), 0);
+    lv_obj_set_style_text_color(album_label, theme::text_secondary(), 0);
+    lv_obj_set_width(album_label, lv_pct(100));
+    lv_label_set_long_mode(album_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(album_label, LV_TEXT_ALIGN_CENTER, 0);
     artist_label = lv_label_create(meta);
     lv_label_set_text(artist_label, "");
     lv_label_set_long_mode(artist_label, LV_LABEL_LONG_DOT);
@@ -113,12 +141,6 @@ void build_into(lv_obj_t *parent) {
     lv_obj_set_style_text_align(artist_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(artist_label, &font_pt15_bold, 0);
     lv_obj_set_style_text_color(artist_label, theme::text_secondary(), 0);
-    album_label = lv_label_create(meta);
-    lv_obj_set_width(album_label, lv_pct(100));
-    lv_obj_set_style_text_align(album_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(album_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_color(album_label, theme::text_secondary(), 0);
-    lv_label_set_text(album_label, "");
 }
 
 }  // namespace
@@ -139,7 +161,9 @@ void media_page::unmount() {
     track_label = artist_label = album_label = nullptr;
     cover_img = cover_box = cover_placeholder = nullptr;
     cover_shown_key[0] = '\0';
-    cover_dsc = {};
+    cover_dsc[0] = {};
+    cover_dsc[1] = {};
+    cover_slot = 0;
     standalone_screen = false;
 }
 
@@ -171,8 +195,6 @@ void media_page::apply_theme() {
     if (status_label) lv_obj_set_style_text_color(status_label, theme::text_secondary(), 0);
     if (track_label) lv_obj_set_style_text_color(track_label, theme::text_primary(), 0);
     if (artist_label) lv_obj_set_style_text_color(artist_label, theme::text_secondary(), 0);
-    if (album_label) lv_obj_set_style_text_color(album_label, theme::text_secondary(), 0);
-    if (cover_box) lv_obj_set_style_bg_color(cover_box, theme::surface(), 0);
     paint(cached, cached_agent_ok);
 }
 
@@ -181,47 +203,27 @@ void media_page::paint(const media::View &view, bool agent_ok) {
     cached = view;
     cached_agent_ok = agent_ok;
     if (!track_label) return;
-    char album[100];
-    if (view.media.album[0] && view.media.year[0] && strcmp(view.media.year, "0"))
-        snprintf(album, sizeof(album), "%s · %s", view.media.album, view.media.year);
-    else snprintf(album, sizeof(album), "%s", view.media.album);
-    set_if(album_label, view.media.ok ? album : "");
 
     auto hide_cover = [&]() {
         if (cover_img) lv_obj_add_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
-        if (cover_box) lv_obj_add_flag(cover_box, LV_OBJ_FLAG_HIDDEN);
+    if (cover_placeholder) lv_obj_remove_flag(cover_placeholder, LV_OBJ_FLAG_HIDDEN);
         cover_shown_key[0] = '\0';
     };
     auto show_cover = [&]() {
-        if (cover_box) lv_obj_remove_flag(cover_box, LV_OBJ_FLAG_HIDDEN);
         if (!cover_img || !view.cover.ready || !view.cover.rgb565) {
-            if (cover_img) lv_obj_add_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
-            if (cover_placeholder) lv_obj_remove_flag(cover_placeholder, LV_OBJ_FLAG_HIDDEN);
-            cover_shown_key[0] = 0;
+            hide_cover();
             return;
         }
-        if (strcmp(cover_shown_key, view.cover.key) != 0) {
-            lv_image_cache_drop(&cover_dsc);
-            cover_dsc = {};
-            cover_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-            cover_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-            cover_dsc.header.w = view.cover.w;
-            cover_dsc.header.h = view.cover.h;
-            cover_dsc.header.stride = static_cast<uint16_t>(view.cover.w * 2);
-            cover_dsc.data_size = media::kCoverBytes;
-            cover_dsc.data = view.cover.rgb565;
-            lv_image_set_src(cover_img, &cover_dsc);
-            strncpy(cover_shown_key, view.cover.key, sizeof(cover_shown_key) - 1);
-            cover_shown_key[sizeof(cover_shown_key) - 1] = '\0';
-        }
-        lv_obj_remove_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
+        bind_cover(cover_img, view.cover);
         if (cover_placeholder) lv_obj_add_flag(cover_placeholder, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
     };
 
     // Soft offline: keep last track if we already showed good data this session.
     if (!agent_ok && !had_good_agent) {
         set_if(track_label, "Aguardando Agente…");
         set_if(artist_label, "");
+        set_if(album_label, "");
         set_status("");
         hide_cover();
         return;
@@ -236,6 +238,7 @@ void media_page::paint(const media::View &view, bool agent_ok) {
         set_if(track_label, view.ready ? "Nada tocando" : "Aguardando…");
         set_status((view.ready && !view.media.ok) ? "mídia indisponível" : "");
         set_if(artist_label, "");
+        set_if(album_label, "");
         hide_cover();
         return;
     }
@@ -243,11 +246,15 @@ void media_page::paint(const media::View &view, bool agent_ok) {
     if (view.media.state == media::MediaState::Stopped || !view.media.title[0]) {
         set_if(track_label, "Nada tocando");
         set_if(artist_label, "");
+        set_if(album_label, "");
         set_status(view.stale ? "desatualizado" : "");
         hide_cover();
     } else {
         set_if(track_label, view.media.title);
         set_if(artist_label, view.media.artist);
+        char album[100];
+        snprintf(album, sizeof(album), "%s%s%s", view.media.album, view.media.album[0] && view.media.year[0] ? " · " : "", view.media.year);
+        set_if(album_label, album);
         // Never show Spotify / Music / app name (spec).
         if (view.stale) set_status("desatualizado");
         else if (view.media.state == media::MediaState::Paused) set_status("pausado");

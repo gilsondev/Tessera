@@ -29,17 +29,15 @@ Focus is observational: the daemon reads actual Mac state. Unsupported private d
 
 ## AI usage
 
-Local credentials resolve the enabled providers. Cursor and Codex use live usage requests; Claude reads a fresh local usage cache. Transient failures retain the last verified values for up to six hours in process memory, then become unavailable rather than fabricated percentages.
+Local credentials resolve the enabled providers. Cursor and Codex use live usage requests; Claude reads its persistent local usage cache, including the weekly quota window. Transient failures retain the last verified values for up to six hours in process memory, then become unavailable rather than fabricated percentages.
 
 ## Protocol and IPC
 
 USB payloads are tab-separated lines; encoders exclude the transport newline. Legacy golden fixtures protect compatible prefixes. They are historical fixtures and do not require the retired Python runtime.
 
-The UI talks to `127.0.0.1:19792` (override: `TESSERA_AGENTD_IPC_PORT`). Allowed browser origins are limited to Tauri and local development on port 1420. See the [full IPC contract](../apps/agent-ui/IPC.md).
+The UI talks to `127.0.0.1:19792` (override: `TESSERA_AGENTD_IPC_PORT`). The live API requires a per-installation Bearer token and accepts only the native Tauri origins. Browser tests use an isolated synthetic server on port 19793. See the [full IPC contract](../apps/agent-ui/IPC.md).
 
-```sh
-curl -s http://127.0.0.1:19792/v1/status
-```
+The token stays in `~/.tessera/agentd/ipc_token` (mode 0600). The main window obtains it through its scoped `ipc_token` Tauri permission. Never include it in browser URLs, screenshots or issue reports.
 
 ## Offline distribution
 

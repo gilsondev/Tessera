@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-agent-status-token"
+description = "Let the local main window authenticate to its own loopback agent."
+commands.allow = ["ipc_token"]
+
+[[permission]]
+identifier = "allow-external-links"
+description = "Open validated HTTP/HTTPS links and the local panel portal."
+commands.allow = ["open_external_url", "open_portal"]

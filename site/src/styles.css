@@ -4,6 +4,7 @@
   --teal:#087a69;
   --sand:#d4a95b;
   --wash:#f4f1ea;
+  --panel-tint:#e2e7dc;
   --line:#d7d9d1;
   --card:#fffefb;
   color:var(--ink);
@@ -185,7 +186,7 @@ p {
   align-items:center;
   min-height:520px;
   border-radius:48% 48% 24% 24%;
-  background:#e2e7dc;
+  background:var(--panel-tint);
 }
 
 .device {
@@ -256,7 +257,7 @@ p {
 
 .gallery figure {
   margin:0;
-  background:#e7e8e1;
+  background:var(--panel-tint);
   padding:28px 20px 20px;
   border-radius:14px;
   text-align:center;
@@ -366,14 +367,14 @@ details summary::marker {
   overflow-wrap:anywhere;
   padding:16px;
   font-size:12px;
-  background:white;
+  background:var(--card);
 }
 
 .command button {
   width:100%;
   border:0;
   border-top:1px solid var(--line);
-  background:#e2e7dc;
+  background:var(--panel-tint);
   color:var(--ink);
   font-weight:600;
 }
@@ -394,7 +395,7 @@ details summary::marker {
 
 .contribute {
   border-radius:16px;
-  background:#e1e7dc;
+  background:var(--panel-tint);
   padding:48px;
   display:grid;
   grid-template-columns:1fr;
@@ -430,7 +431,7 @@ footer .brand {
   position:fixed;
   top:-100px;
   left:20px;
-  background:white;
+  background:var(--card);
   padding:16px;
   z-index:10;
 }
@@ -577,3 +578,10 @@ footer .brand {
   }
 
 }
+
+.theme-toggle{min-width:36px;min-height:36px;border:1px solid var(--line);border-radius:50%;background:var(--card);color:var(--ink);cursor:pointer;font-size:20px}
+:root[data-theme="dark"]{--ink:#f1f2ed;--muted:#bac6c2;--teal:#62d5b9;--sand:#dfbd7b;--wash:#151e1c;--panel-tint:#2d3c35;--line:#3c4b46;--card:#202c28;color-scheme:dark}
+
+:root[data-theme="dark"] .primary{color:#10241e}
+:root[data-theme="dark"] .dark{background:#dfece5;color:#14231c}
+:root[data-theme="dark"] .command button{background:#34473e}

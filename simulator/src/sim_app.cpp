@@ -13,7 +13,15 @@
 #include "ui/palette.h"
 #include "ui/settings_panel.h"
 #include "ui/todoist_panel.h"
+#include "ui/media_page.h"
+#include "ui/media_tile.h"
+#include "media_widget.h"
+#include "tessera/runtime.h"
 #include "ui/weather_page.h"
+#include "mac/focus_snapshot.h"
+#include "media/snapshot.h"
+
+#include <cstdlib>
 
 #include <cstdio>
 #include <cstring>
@@ -134,8 +142,9 @@ void sim_app::paint_fixture(State &app) {
     home::set_weather(sim_detail::weather_view(s));
     home::set_aitokens(sim_detail::aitokens_view(s));
     home::set_calendar(sim_detail::calendar_view(s));
-    home::set_media(music, true);
+    media_tile::set(music, true);
     home::set_mac(focus_view, true);
+
 }
 
 void sim_app::init(State &app, const Scenario &scenario) {
@@ -156,6 +165,8 @@ void sim_app::init(State &app, const Scenario &scenario) {
     focus::apply_line(focus_view, "FOCUS\tv1\t1\twork\tTrabalho\t1\twork\tTrabalho", 0);
     media_page::begin(go_home, nullptr);
     mac_page::begin(go_home, nullptr);
+
+    tessera::runtime().register_type(tessera::media_widget_id(), tessera::create_media_widget);
     home::begin(open_widget, on_settings);
     // begin() monta a partir de settings; reforça o layout do fixture.
     home::rebuild(app.scenario.dashboard);
@@ -163,6 +174,46 @@ void sim_app::init(State &app, const Scenario &scenario) {
     home::show();
     app.home_ready = true;
 }
+
+namespace {
+
+// Optional 200×200 RGB565 cover (SIM_MEDIA_COVER) for the Música detail screenshot.
+void open_media(lv_event_cb_t on_back) {
+    static uint8_t cover_bytes[media::kCoverBytes];
+    const char *track = std::getenv("SIM_MEDIA_TITLE");
+    const char *artist = std::getenv("SIM_MEDIA_ARTIST");
+    const char *cover_path = std::getenv("SIM_MEDIA_COVER");
+    if (!track || !track[0]) track = "Foco";
+    if (!artist || !artist[0]) artist = "Ambiente";
+
+    media::View view = {};
+    view.ready = true;
+    view.media.ok = true;
+    view.media.state = media::MediaState::Playing;
+    std::snprintf(view.media.title, sizeof(view.media.title), "%s", track);
+    std::snprintf(view.media.artist, sizeof(view.media.artist), "%s", artist);
+
+    if (cover_path && cover_path[0]) {
+        FILE *f = std::fopen(cover_path, "rb");
+        if (f) {
+            const size_t n = std::fread(cover_bytes, 1, sizeof(cover_bytes), f);
+            std::fclose(f);
+            if (n == sizeof(cover_bytes)) {
+                view.cover.ready = true;
+                view.cover.w = media::kCoverEdge;
+                view.cover.h = media::kCoverEdge;
+                view.cover.rgb565 = cover_bytes;
+                std::snprintf(view.cover.key, sizeof(view.cover.key), "shot");
+            }
+        }
+    }
+
+    media_page::begin(on_back, nullptr);
+    media_page::show();
+    media_page::paint(view, true);
+}
+
+}  // namespace
 
 void sim_app::show(State &app, Screen screen) {
     if (settings_panel::visible() && screen != Screen::Settings) {
@@ -198,6 +249,8 @@ void sim_app::show(State &app, Screen screen) {
         mac_page::show(); mac_page::paint(focus_view, true);
     } else if (screen == Screen::Clock) {
         sim_detail::open_clock(app.scenario, go_home);
+    } else if (screen == Screen::Media) {
+        open_media(go_home);
     }
     app.screen = screen;
 }
@@ -232,6 +285,8 @@ sim_app::Screen sim_app::parse_screen(const char *name) {
     if (!std::strcmp(name, "calendar") || !std::strcmp(name, "calendario") || !std::strcmp(name, "agenda"))
         return Screen::Calendar;
     if (!std::strcmp(name, "clock") || !std::strcmp(name, "relogio")) return Screen::Clock;
+    if (!std::strcmp(name, "media") || !std::strcmp(name, "musica") || !std::strcmp(name, "music"))
+        return Screen::Media;
     if (!std::strcmp(name, "settings") || !std::strcmp(name, "ajustes") || !std::strcmp(name, "config"))
         return Screen::Settings;
     return Screen::Home;
@@ -251,6 +306,7 @@ const char *sim_app::screen_name(Screen s) {
             return "calendar";
         case Screen::Clock:
             return "clock";
+
         case Screen::Settings:
             return "settings";
         case Screen::Home:
@@ -262,6 +318,6 @@ const char *sim_app::screen_name(Screen s) {
 void sim_app::ingest_media(State &app, const char *line) {
     if (strncmp(line,"MEDIA_COVER\t",12)==0) media::apply_cover_line(music,line);
     else media::apply_line(music,line,0);
-    home::set_media(music,true);
+    media_tile::set(music,true);
     if (app.screen == Screen::Media) media_page::paint(music,true);
 }

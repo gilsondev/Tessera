@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import zlib
 import serial
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from panel_probe import snapshot
@@ -59,9 +60,10 @@ def main():
         def tap(x,y): send(f'DRAG {x} {y} {x} {y} 120',1.0)
         def click(text):
             for _ in range(6):
-                rows=tree(); row=next((r for r in rows if text in r['text'] and r['clickable'] and 40<r['y']<440),None)
+                rows=tree(); row=next((r for r in rows if (text in r['text'] or (text=='Clima' and '°' in r['text'])) and r['clickable'] and 40<r['y']<440),None)
                 if row is not None: tap(row['x'],row['y']); return
                 send('DRAG 160 400 160 180 400',.7)
+            (OUT/'missing-target-tree.json').write_text(json.dumps(rows,ensure_ascii=False))
             raise AssertionError(f'No visible touch target: {text}')
         send('REST wake')
         # Recover home by user-like back taps. No synthetic navigation shortcut.
@@ -69,6 +71,8 @@ def main():
             if any(r['text']=='\uf013' and r['y']<60 for r in tree()): break
             tap(32,28)
         home()
+        # Home preserves scroll position after a detail page; return to its top.
+        for _ in range(4): send('DRAG 160 150 160 410 400',.7)
         click('Clima')
         weather_rows=tree()
         assert any(r['text']=='\uf053' and r['clickable'] and r['y']<60 for r in weather_rows), 'Expected weather detail back button'
@@ -85,8 +89,8 @@ def main():
             data=b'\x00\xf8'*(200*200); count=(len(data)+479)//480; output=''
             for i in range(count):
                 if i==omit: continue
-                line=f'MEDIA_COVER\tv1\t1\t{key}\t200\t200\trgb565le\t{count}\t{i}\t{data[i*480:(i+1)*480].hex()}\n'
-                ser.write(line.encode());ser.flush();time.sleep(.002)
+                line=f'MEDIA_COVER\tv1\t1\t{key}\t200\t200\trgb565le\t{count}\t{i}\t{zlib.crc32(data[i*480:(i+1)*480]):08x}\t{data[i*480:(i+1)*480].hex()}\n'
+                ser.write(line.encode());ser.flush();time.sleep(.02)
                 if ser.in_waiting: output+=ser.read(ser.in_waiting).decode('utf8','replace')
             return output+read(.8)
         # Missing chunk never completes; a full retry must recover and ACK.

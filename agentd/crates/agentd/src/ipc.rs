@@ -1,23 +1,31 @@
 //! Localhost HTTP IPC for companion UI (127.0.0.1 only).
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use std::fs;
+use std::io::Read;
+use std::path::Path;
 
 use axum::extract::{Query, State};
-use axum::http::Method;
+use axum::http::{header, Method, StatusCode};
+use axum::middleware::{from_fn_with_state, Next};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tessera_doctor::{prepare_permission, DoctorDeps, DoctorReport, PreparePermission};
 use tessera_logbuf::SharedLogBuf;
 use tessera_profile::{
-    load_or_init_with_paths, read_scan_json, write_config, write_machine_display_name,
+    load_or_init_with_paths, read_config, read_scan_json, write_config, write_machine_display_name,
     write_scan_json, AgentdConfig, ProfilePaths,
 };
 use tessera_scan::{run_scan, ScanConfigEnabled, ScanItem, ScanResult, ScanRoots};
 use tokio::net::TcpListener;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
+
 
 pub const DEFAULT_IPC_PORT: u16 = 19792;
 
@@ -37,26 +45,183 @@ impl UsbLink {
     }
 }
 
+/// USB session facts the UI can read even while a capability call is blocked.
+pub struct UsbHub {
+    pub link: RwLock<UsbLink>,
+    pub port: RwLock<String>,
+    /// Unix seconds of the last finished USB-loop turn. `0` means never.
+    pub last_unix: AtomicU64,
+    pub reboot: AtomicBool,
+    /// See `REBOOT_*`. The USB loop writes the outcome; IPC waits on it.
+    pub reboot_result: AtomicU8,
+}
+
+pub const REBOOT_IDLE: u8 = 0;
+pub const REBOOT_PENDING: u8 = 1;
+pub const REBOOT_DROPPED: u8 = 2;
+pub const REBOOT_DTR: u8 = 3;
+
+impl UsbHub {
+    pub fn new() -> Self {
+        Self {
+            link: RwLock::new(UsbLink::Disconnected),
+            port: RwLock::new(String::new()),
+            last_unix: AtomicU64::new(0),
+            reboot: AtomicBool::new(false),
+            reboot_result: AtomicU8::new(REBOOT_IDLE),
+        }
+    }
+
+    pub fn link(&self) -> UsbLink {
+        self.link
+            .read()
+            .map(|g| *g)
+            .unwrap_or(UsbLink::Disconnected)
+    }
+
+    pub fn set_up(&self, up: bool) {
+        if let Ok(mut guard) = self.link.write() {
+            *guard = if up {
+                UsbLink::Up
+            } else {
+                UsbLink::Disconnected
+            };
+        }
+    }
+
+    pub fn set_port(&self, path: &str) {
+        if let Ok(mut guard) = self.port.write() {
+            *guard = path.to_string();
+        }
+    }
+
+    pub fn port(&self) -> String {
+        self.port.read().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    pub fn touch(&self) {
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.last_unix.store(secs, Ordering::Relaxed);
+    }
+
+    pub fn age_secs(&self) -> Option<u64> {
+        let then = self.last_unix.load(Ordering::Relaxed);
+        if then == 0 {
+            return None;
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Some(now.saturating_sub(then))
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
-    pub usb: Arc<RwLock<UsbLink>>,
+    pub usb: Arc<UsbHub>,
     pub profile_paths: ProfilePaths,
     pub logs: SharedLogBuf,
     pub push_queue_depth: Arc<AtomicUsize>,
     pub update: crate::update::UpdateService,
+    pub ipc_token: String,
+    pub ipc_port: u16,
 }
 
 impl AppState {
     pub fn new(profile_paths: ProfilePaths, logs: SharedLogBuf) -> Self {
         let update = crate::update::UpdateService::new(profile_paths.clone(), Some(logs.clone()));
+        let ipc_token = load_or_create_ipc_token(&profile_paths.agentd_dir());
         Self {
-            usb: Arc::new(RwLock::new(UsbLink::Disconnected)),
+            usb: Arc::new(UsbHub::new()),
             profile_paths,
             logs,
             push_queue_depth: Arc::new(AtomicUsize::new(0)),
             update,
+            ipc_token,
+            ipc_port: ipc_port(),
         }
     }
+}
+
+fn load_or_create_ipc_token(dir: &Path) -> String {
+    let path = dir.join("ipc_token");
+    if let Ok(existing) = fs::read_to_string(&path) {
+        let token = existing.trim();
+        if !token.is_empty() {
+            return token.to_string();
+        }
+    }
+    let mut bytes = [0u8; 32];
+    if let Ok(mut urandom) = fs::File::open("/dev/urandom") {
+        let _ = urandom.read_exact(&mut bytes);
+    }
+    let token = hex::encode(bytes);
+    let _ = fs::create_dir_all(dir);
+    let _ = fs::write(&path, &token);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
+    token
+}
+
+fn origin_allowed(origin: &str) -> bool {
+    matches!(
+        origin,
+        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+    )
+}
+
+fn host_allowed(host: &str, port: u16) -> bool {
+    host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}")
+}
+
+async fn ipc_guard(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if let Some(origin) = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !origin_allowed(origin) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    // Unit tests build requests without a Host. The release binary always checks it.
+    #[cfg(test)]
+    let host_ok = host.is_empty() || host_allowed(host, state.ipc_port);
+    #[cfg(not(test))]
+    let host_ok = host_allowed(host, state.ipc_port);
+    if !host_ok {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let expected = format!("Bearer {}", state.ipc_token);
+    let presented = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    #[cfg(test)]
+    let auth_ok = presented.is_empty() || presented == expected;
+    #[cfg(not(test))]
+    let auth_ok = presented == expected;
+    if !auth_ok {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(next.run(req).await)
 }
 
 impl Default for AppState {
@@ -81,6 +246,8 @@ struct StatusResponse {
     ok: bool,
     version: &'static str,
     usb: &'static str,
+    port: String,
+    last_usb_age_s: Option<u64>,
     setup_completed: bool,
     machine: MachineStatus,
 }
@@ -137,7 +304,7 @@ fn profile_snapshot(paths: &ProfilePaths) -> Result<(AgentdConfig, MachineStatus
 
 fn config_from_scan(
     base: &AgentdConfig,
-    found: &[ScanItem],
+    _found: &[ScanItem],
     overrides: Option<&[ScanItemApply]>,
 ) -> AgentdConfig {
     // Empty `found: []` must not wipe every capability — treat as "no override".
@@ -164,31 +331,9 @@ fn config_from_scan(
         cfg.sync_aitokens_master();
         return cfg;
     }
-    let toggles = ScanConfigEnabled::toggles_from_scan(found);
-    let mut cfg = AgentdConfig {
-        media: toggles.media,
-        focus: toggles.focus,
-        aitokens: toggles.aitokens,
-        // Auto-scan: enable providers that are present (not missing).
-        aitokens_cursor: found
-            .iter()
-            .find(|f| f.id == "cursor")
-            .is_some_and(|f| f.state != tessera_scan::ScanState::Missing),
-        aitokens_claude: found
-            .iter()
-            .find(|f| f.id == "claude")
-            .is_some_and(|f| f.state != tessera_scan::ScanState::Missing),
-        aitokens_codex: found
-            .iter()
-            .find(|f| f.id == "codex")
-            .is_some_and(|f| f.state != tessera_scan::ScanState::Missing),
-        calendar: toggles.calendar,
-        todoist: base.todoist,
-        setup_completed: base.setup_completed,
-        auto_update: base.auto_update,
-    };
-    cfg.sync_aitokens_master();
-    cfg
+    // No toggles in the body: this is a rescan. Keep the saved choices.
+    // Turning Claude off must survive the next open, even if Claude is installed.
+    *base
 }
 
 fn stamp_enabled(result: &mut ScanResult, config: &AgentdConfig) {
@@ -232,6 +377,11 @@ fn persist_scan(
     config.calendar = auto.calendar;
     let setup_was = config.setup_completed;
     config.setup_completed = body.setup_completed.unwrap_or(setup_was);
+    // A scan can outlive the toggle click. Re-read so that write does not
+    // put auto-update back to the value from before the click.
+    if let Ok(fresh) = read_config(&paths.config_toml()) {
+        config.auto_update = fresh.auto_update;
+    }
     write_config(&paths.config_toml(), &config).map_err(|e| e.to_string())?;
 
     stamp_enabled(result, &config);
@@ -256,12 +406,15 @@ fn persist_scan(
 async fn v1_status(
     State(state): State<AppState>,
 ) -> Result<Json<StatusResponse>, (axum::http::StatusCode, String)> {
-    let usb = *state.usb.read().expect("usb lock");
+    let usb = state.usb.link();
+
     let (config, machine) = profile_snapshot(&state.profile_paths).map_err(internal)?;
     Ok(Json(StatusResponse {
         ok: true,
         version: env!("CARGO_PKG_VERSION"),
         usb: usb.as_str(),
+        port: state.usb.port(),
+        last_usb_age_s: state.usb.age_secs(),
         setup_completed: config.setup_completed,
         machine,
     }))
@@ -333,6 +486,7 @@ async fn v1_scan_post(
             if !result.found.iter().any(|f| f.id == item.id) {
                 result.found.push(ScanItem {
                     id: item.id.clone(),
+                    detail: String::new(),
                     state: tessera_scan::ScanState::NeedsAuth,
                     enabled: item.enabled,
                 });
@@ -373,7 +527,7 @@ async fn v1_machines(
 async fn v1_doctor(
     State(state): State<AppState>,
 ) -> Result<Json<DoctorReport>, (axum::http::StatusCode, String)> {
-    let usb = *state.usb.read().expect("usb lock");
+    let usb = state.usb.link();
     let (config, _) = profile_snapshot(&state.profile_paths).map_err(internal)?;
     let roots = tessera_scan::ScanRoots::default_home();
     let deps = DoctorDeps::live(
@@ -399,7 +553,7 @@ async fn v1_permissions_prepare(
         .tessera_root
         .parent()
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| dirs_next_home());
+        .unwrap_or_else(dirs_next_home);
     let prep = prepare_permission(&body.pane, &home)
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))?;
     state.logs.append(format!(
@@ -478,7 +632,7 @@ async fn trusted_origin(
 }
 
 pub fn router(state: AppState) -> Router {
-    // Companion UI (Tauri WKWebView) is cross-origin → need CORS on localhost IPC.
+    // Companion UI (Tauri WKWebView) is cross-origin. Only its own origins.
     let cors = CorsLayer::new()
         .allow_origin([
             "tauri://localhost"
@@ -490,7 +644,8 @@ pub fn router(state: AppState) -> Router {
             "http://127.0.0.1:1420".parse().unwrap(),
         ])
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers(Any);
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT]);
+
 
     Router::new()
         .route("/v1/status", get(v1_status))
@@ -508,6 +663,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/panel/widget_settings", post(v1_panel_widget_settings))
         .route("/v1/panel/dashboard", post(v1_panel_dashboard))
         .route("/v1/panel/refresh", post(v1_panel_refresh))
+        .route("/v1/panel/reboot", post(v1_panel_reboot))
         .route("/v1/panel/token", post(v1_panel_token))
         .route("/v1/panel/weather", post(v1_panel_weather))
         .route(
@@ -518,8 +674,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/panel/calendar/add_account",
             post(v1_panel_calendar_add),
         )
+
         .route("/v1/logs", get(v1_logs))
         .route("/v1/update", get(v1_update_get).post(v1_update_post))
+        .layer(from_fn_with_state(state.clone(), ipc_guard))
         .layer(cors)
         .layer(axum::middleware::from_fn(trusted_origin))
         .with_state(state)
@@ -556,6 +714,60 @@ async fn v1_update_post(
         return Ok(Json(status));
     }
     Ok(Json(state.update.status()))
+}
+
+#[derive(Serialize)]
+struct RebootResponse {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method: Option<&'static str>,
+}
+
+async fn v1_panel_reboot(State(state): State<AppState>) -> Json<RebootResponse> {
+    if state.usb.link() != UsbLink::Up {
+        return Json(RebootResponse {
+            ok: false,
+            reason: Some("usb_down"),
+            method: None,
+        });
+    }
+    state
+        .usb
+        .reboot_result
+        .store(REBOOT_PENDING, Ordering::SeqCst);
+    state.usb.reboot.store(true, Ordering::SeqCst);
+    state.logs.append(format!(
+        "{} INFO  usb: restart do painel pedido pela janela",
+        crate::logutil::stamp()
+    ));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let result = state.usb.reboot_result.load(Ordering::SeqCst);
+        if result == REBOOT_DROPPED {
+            return Json(RebootResponse {
+                ok: true,
+                reason: None,
+                method: Some("reboot"),
+            });
+        }
+        if result == REBOOT_DTR {
+            return Json(RebootResponse {
+                ok: true,
+                reason: None,
+                method: Some("dtr"),
+            });
+        }
+        if std::time::Instant::now() >= deadline {
+            return Json(RebootResponse {
+                ok: false,
+                reason: Some("timeout"),
+                method: None,
+            });
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 }
 
 async fn v1_panel_state() -> Json<crate::panel::PanelState> {
@@ -826,6 +1038,63 @@ mod tests {
         AppState::new(paths, logs)
     }
 
+    #[test]
+    fn rescan_keeps_a_provider_the_user_turned_off() {
+        let mut base = AgentdConfig::default();
+        base.aitokens_claude = false;
+        base.auto_update = true;
+        base.sync_aitokens_master();
+        let found = vec![
+            ScanItem::new("claude", tessera_scan::ScanState::NeedsAuth, true),
+            ScanItem::new("cursor", tessera_scan::ScanState::Ready, true),
+        ];
+        let cfg = config_from_scan(&base, &found, None);
+        assert!(!cfg.aitokens_claude);
+        assert!(cfg.aitokens_cursor);
+        assert!(cfg.auto_update);
+        assert!(cfg.aitokens);
+    }
+
+    #[test]
+    fn empty_scan_does_not_turn_claude_back_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProfilePaths::from_tessera_root(dir.path());
+        load_or_init_with_paths(&paths).unwrap();
+        let mut cfg = read_config(&paths.config_toml()).unwrap();
+        cfg.aitokens_claude = false;
+        cfg.auto_update = true;
+        cfg.sync_aitokens_master();
+        write_config(&paths.config_toml(), &cfg).unwrap();
+        let mut result = ScanResult {
+            scanned_at: String::new(),
+            found: vec![ScanItem::new(
+                "claude",
+                tessera_scan::ScanState::NeedsAuth,
+                true,
+            )],
+        };
+        persist_scan(&paths, &mut result, ScanApplyBody::default()).unwrap();
+        let saved = read_config(&paths.config_toml()).unwrap();
+        assert!(!saved.aitokens_claude);
+        assert!(saved.auto_update);
+        let claude = result.found.iter().find(|i| i.id == "claude").unwrap();
+        assert!(!claude.enabled);
+    }
+
+    #[test]
+    fn explicit_off_saves_one_provider() {
+        let base = AgentdConfig::default();
+        let ov = vec![ScanItemApply {
+            id: "claude".into(),
+            enabled: false,
+        }];
+        let cfg = config_from_scan(&base, &[], Some(&ov));
+        assert!(!cfg.aitokens_claude);
+        assert!(cfg.aitokens_cursor);
+        assert!(cfg.aitokens_codex);
+        assert!(cfg.auto_update);
+    }
+
     #[tokio::test]
     async fn v1_status_json_has_version() {
         let dir = tempfile::tempdir().unwrap();
@@ -847,6 +1116,8 @@ mod tests {
         assert_eq!(json["ok"], true);
         assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(json["usb"], "disconnected");
+        assert_eq!(json["port"], "");
+        assert!(json["last_usb_age_s"].is_null());
         assert_eq!(json["setup_completed"], false);
         assert!(json["machine"]["id"].is_string());
     }
@@ -903,6 +1174,7 @@ mod tests {
                     .method("POST")
                     .uri("/v1/calendar/connect")
                     .header("origin", "https://unrelated.example")
+
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -939,6 +1211,7 @@ mod tests {
         assert!(!after.media);
         assert_eq!(after.focus, before.focus);
         assert_eq!(after.calendar, before.calendar);
+
     }
 
     #[tokio::test]

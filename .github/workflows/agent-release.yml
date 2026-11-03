@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version sem tag prefix (ex. 0.1.1). Vazio = lê Cargo workspace."
+        description: "Version sem tag prefix (ex. 0.1.1). Vazio = lê VERSION."
         required: false
         default: ""
 
@@ -19,11 +19,20 @@ env:
 
 jobs:
   build-mac:
-    runs-on: macos-14
+    runs-on: macos-15
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag must be on main
+        if: startsWith(github.ref, 'refs/tags/agent-v')
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge-base --is-ancestor HEAD FETCH_HEAD
 
       - uses: jdx/mise-action@v2
         with:
@@ -37,31 +46,22 @@ jobs:
           elif [[ "${GITHUB_REF}" == refs/tags/agent-v* ]]; then
             V="${GITHUB_REF#refs/tags/agent-v}"
           else
-            V="$(python3 -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('agentd/Cargo.toml').read_text())['workspace']['package']['version'])")"
+            V="$(tr -d '[:space:]' < VERSION)"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Resolved version: $V"
 
-      - name: Align binary and app versions with the release
+      - name: Stamp manifests from the release version
         env:
-          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+          VER: ${{ steps.ver.outputs.version }}
         run: |
-          python3 - <<'PYVERSION'
-          import json, os, pathlib, re
-          version = os.environ["RELEASE_VERSION"]
-          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
-              raise SystemExit("Invalid release version")
-          for name in ["agentd/Cargo.toml", "apps/agent-ui/src-tauri/Cargo.toml"]:
-              path = pathlib.Path(name)
-              text, count = re.subn(r'^version = "[^"]+"', 'version = "' + version + '"', path.read_text(), count=1, flags=re.M)
-              if count != 1:
-                  raise SystemExit("Missing version in " + name)
-              path.write_text(text)
-          path = pathlib.Path("apps/agent-ui/src-tauri/tauri.conf.json")
-          doc = json.loads(path.read_text())
-          doc["version"] = version
-          path.write_text(json.dumps(doc, indent=2) + "\n")
-          PYVERSION
+          set -euo pipefail
+          FILE="$(tr -d '[:space:]' < VERSION)"
+          if [ "$FILE" != "$VER" ]; then
+            echo "VERSION ($FILE) diferente da tag ou do input ($VER)" >&2
+            exit 1
+          fi
+          python3 tools/stamp_agent_version.py --root . --version "$VER"
 
       - name: Test agentd
         working-directory: agentd
@@ -71,9 +71,12 @@ jobs:
         working-directory: agentd
         run: cargo build --release -p agentd
 
+      - name: Bundle agentd into the app
+        run: bash tools/bundle_agentd.sh
+
       - name: Build Tessera.app
         working-directory: apps/agent-ui
-        run: npm ci && npm run tauri build
+        run: npm install && npm run tauri build
 
       - name: Package artifacts
         id: pack
@@ -104,6 +107,9 @@ jobs:
             find apps/agent-ui agentd -path '*/bundle/macos/*.app' 2>/dev/null | head
             exit 1
           fi
+          # Linker signature alone makes a downloaded app look damaged.
+          bash tools/bundle_agentd_into_app.sh "$APP" agentd/target/release/Tessera
+          bash tools/sign_macos_app.sh "$APP"
           cp -R "$APP" "$OUT/stage/Tessera.app"
 
           # Same layout as agentd/pack_sd.sh: bin/ + Tessera.app inside one tgz for curl|bash install.
@@ -193,27 +199,53 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/download-artifact@v4
         with:
           name: latest-json
           path: site/public
       - name: Commit latest.json on release tag build
         id: commit_latest
+        env:
+          VER: ${{ needs.build-mac.outputs.version }}
         run: |
+          set -euo pipefail
+          python3 - "$VER" <<'PY'
+          import json, sys
+          ver = json.load(open("site/public/latest.json"))["version"]
+          expect = sys.argv[1]
+          if ver != expect:
+              raise SystemExit(f"latest.json is {ver}, build finished {expect}")
+          PY
+          cp site/public/latest.json /tmp/latest.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add site/public/latest.json
           if git diff --staged --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "no change"
+            echo "latest.json already matches ${VER}"
           else
-            git commit -m "chore(site): latest.json for agent-v${{ needs.build-mac.outputs.version }}"
-            git push origin HEAD:main || git push origin HEAD:master
+            git commit -m "chore(site): latest.json for agent-v${VER}"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "push rejected, rebasing onto main (attempt ${attempt})" >&2
+            git fetch origin main
+            if ! git rebase origin/main; then
+              cp /tmp/latest.json site/public/latest.json
+              git add site/public/latest.json
+              GIT_EDITOR=true git rebase --continue
+            fi
+          done
+          echo "could not publish latest.json for ${VER}" >&2
+          exit 1
       # GITHUB_TOKEN pushes do not re-trigger workflows — dispatch Pages explicitly.
+      # Run even when the file was already current, so a finished build still publishes that version.
       - name: Deploy Pages with fresh latest.json
-        if: steps.commit_latest.outputs.changed == 'true'
         uses: actions/github-script@v7
         with:
           script: |

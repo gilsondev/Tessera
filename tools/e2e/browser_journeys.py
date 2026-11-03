@@ -110,14 +110,25 @@ assert evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 shot('agent-narrow.png')
 print('PASS Agent: compact controls, immediate switches during delayed saves, last-click-wins, independent collection/display, first-use, real USB gate, persisted setup, native calendar grant/selection/denial, network offline, daemon error, narrow layout')
 
-new_tab('http://127.0.0.1:1420/Tessera/')
+site_tab=new_tab('http://127.0.0.1:1420/Tessera/')
+activate_tab(site_tab)  # Chrome defers lazy images while this test tab is hidden
 viewport(1280,900); wait_for_load()
-until('document.getElementById("version-note").textContent.includes("0.1.0")')
+version = json.loads(pathlib.Path("site/public/latest.json").read_text())["version"]
+until(f'document.getElementById("version-note").textContent.includes({json.dumps(version)})')
 assert evaluate('document.querySelectorAll(".setup-list > li").length === 4')
-assert evaluate('[...document.images].every(i=>i.complete && i.naturalWidth>0)')
+root=cdp("DOM.getDocument")["root"]["nodeId"]
+for node in cdp("DOM.querySelectorAll",nodeId=root,selector="img")["nodeIds"]:
+    cdp("DOM.scrollIntoViewIfNeeded",nodeId=node)
+    time.sleep(.15)
+until('[...document.images].every(i=>i.complete && i.naturalWidth>0)')
+click_name("Conheça",role="link")
 assert evaluate('document.getElementById("download").getAttribute("href") === "/Tessera/install.command"')
 assert evaluate('![...document.querySelectorAll("a")].some(a=>a.href.includes("Tessara"))')
 shot('site-desktop.png')
+click_name('Alterar aparência'); click_name('Alterar aparência')
+until('document.documentElement.dataset.theme === "dark"')
+shot('site-dark.png')
+click_name('Alterar aparência')
 viewport(390,844)
 assert evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 shot('site-mobile.png')

@@ -1,3 +1,5 @@
+mod service;
+
 /// Local agentd IPC origin (must match `connect-src` in `tauri.conf.json`).
 pub const AGENTD_IPC_ORIGIN: &str = "http://127.0.0.1:19792";
 
@@ -21,6 +23,14 @@ fn emit_navigate(app: &AppHandle, screen_id: &str) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.emit("navigate", screen_id);
     }
+}
+
+/// Open the panel portal in the browser.
+#[tauri::command]
+fn open_portal(app: AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url("http://tessera.local", None::<&str>)
+        .map_err(|e| format!("abrir o painel: {e}"))
 }
 
 /// Open a macOS Privacy / Login Items deep link. Optionally reveal `reveal_path` in Finder
@@ -103,7 +113,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             open_privacy_settings,
-            open_external_url
+            open_external_url,
+            open_portal,
+            service::ipc_token,
+            service::agentd_service,
+            service::ensure_agentd,
+            service::panel_force_reset
+
         ])
         .setup(|app| {
             #[cfg(desktop)]

@@ -133,10 +133,10 @@ fn load_plist_json(path: &Path) -> Option<Value> {
     if !path.is_file() {
         return None;
     }
-    let out = Command::new("plutil")
-        .args(["-convert", "json", "-o", "-", path.to_str()?])
-        .output()
-        .ok()?;
+    let out = tessera_proc::command_output_timeout(
+        Command::new("plutil").args(["-convert", "json", "-o", "-", path.to_str()?]),
+        std::time::Duration::from_secs(2),
+    )?;
     if !out.status.success() {
         return None;
     }

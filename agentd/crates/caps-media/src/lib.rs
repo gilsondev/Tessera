@@ -138,10 +138,10 @@ mod macos {
 
     impl MediaWatcher for MacNowPlayingWatcher {
         fn read(&mut self) -> Option<MediaInfo> {
-            let out = Command::new("osascript")
-                .args(["-e", OSASCRIPT])
-                .output()
-                .ok()?;
+            let out = tessera_proc::command_output_timeout(
+                Command::new("osascript").args(["-e", OSASCRIPT]),
+                std::time::Duration::from_secs(2),
+            )?;
             if !out.status.success() {
                 return None;
             }

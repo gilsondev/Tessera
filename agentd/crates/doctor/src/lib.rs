@@ -74,14 +74,14 @@ pub struct PreparePermission {
     pub hint: String,
 }
 
-/// Path shown in Privacy / Finder: prefer the agentd **app bundle** (Tessera icon).
-/// Falls back to the bare `bin/Tessera` for older installs.
+/// LaunchAgent binary. Update, the doctor and the plist all use this path.
+pub fn agentd_install_binary(home: &Path) -> std::path::PathBuf {
+    home.join(".tessera/agentd/Tessera Agent.app/Contents/MacOS/Tessera")
+}
+
+/// Path shown in Privacy / Finder. Same file the LaunchAgent runs.
 pub fn agentd_identity_path(home: &Path) -> std::path::PathBuf {
-    let app = home.join(".tessera/agentd/Tessera.app");
-    if app.join("Contents/MacOS/Tessera").is_file() {
-        return app;
-    }
-    home.join(".tessera/agentd/bin/Tessera")
+    agentd_install_binary(home)
 }
 
 /// Touch protected APIs so **Tessera** shows up in the Privacy list (toggle still off
@@ -96,22 +96,19 @@ pub fn prepare_permission(pane: &str, home: &Path) -> Result<PreparePermission, 
         "full_disk_access" => {
             // Reading Focus DBs registers this process with TCC (denied → listed).
             // LaunchAgent must run Contents/MacOS/Tessera inside Tessera.app for the brand icon.
-            let _ = std::fs::File::open(
-                home.join("Library/DoNotDisturb/DB/ModeConfigurations.json"),
-            );
+            let _ =
+                std::fs::File::open(home.join("Library/DoNotDisturb/DB/ModeConfigurations.json"));
             let _ = std::fs::File::open(home.join("Library/DoNotDisturb/DB/Assertions.json"));
-            let _ = std::fs::File::open(
-                home.join("Library/Application Support/com.apple.TCC/TCC.db"),
-            );
+            let _ =
+                std::fs::File::open(home.join("Library/Application Support/com.apple.TCC/TCC.db"));
         }
         "automation" => {
             // Harmless AppleEvent so Tessera appears under Automation → Shortcuts.
-            let _ = Command::new("osascript")
-                .args([
-                    "-e",
-                    "tell application \"System Events\" to get name",
-                ])
-                .output();
+            let _ = tessera_proc::command_output_timeout(
+                Command::new("osascript")
+                    .args(["-e", "tell application \"System Events\" to get name"]),
+                std::time::Duration::from_secs(2),
+            );
         }
         "login_items" | "calendar" => {}
         _ => {}
@@ -119,14 +116,17 @@ pub fn prepare_permission(pane: &str, home: &Path) -> Result<PreparePermission, 
 
     let hint = match pane {
         "full_disk_access" => {
-            "Na lista, ligue «Tessera» (ícone do produto — não o Terminal). Se faltar, use + e escolha Tessera.app."
+            "Na lista, ligue «Tessera Agent». Ele já aparece aí. O Tessera da pasta Aplicativos é só a janela."
                 .into()
         }
         "automation" => {
             "Em Automação, expanda Tessera e marque Shortcuts / System Events.".into()
         }
         "login_items" => "Confirme que Tessera aparece em Itens de Abertura / Em segundo plano.".into(),
-        "calendar" => "Autorize Tessera a ver o Calendário.".into(),
+        "calendar" => {
+            "Em Calendários, permita Tessera Calendar. O Tessera só lê os calendários escolhidos no Agente."
+                .into()
+        }
         _ => "Ligue a permissão para Tessera e volte ao app.".into(),
     };
 
@@ -210,14 +210,8 @@ pub fn run_doctor(deps: &DoctorDeps) -> DoctorReport {
 }
 
 fn summarize(checks: &[DoctorCheck]) -> String {
-    let bad = checks
-        .iter()
-        .filter(|c| c.level == "bad")
-        .count();
-    let warn = checks
-        .iter()
-        .filter(|c| c.level == "warn")
-        .count();
+    let bad = checks.iter().filter(|c| c.level == "bad").count();
+    let warn = checks.iter().filter(|c| c.level == "warn").count();
     match (bad, warn) {
         (0, 0) => "Tudo certo".to_string(),
         (1, _) => "1 coisa precisa de você".to_string(),
@@ -286,7 +280,7 @@ fn check_files(deps: &DoctorDeps) -> DoctorCheck {
             "files",
             "bad",
             "Acesso aos arquivos",
-            "Marque «Tessera» (não o Terminal) em Privacidade → Disco completo.",
+            "Na lista de Disco completo, ligue «Tessera Agent». Ele já aparece aí.",
             Some("setup"),
             Some("full_disk_access"),
         )
@@ -328,11 +322,15 @@ fn item<'a>(scan: &'a ScanResult, id: &str) -> Option<&'a ScanItem> {
     scan.found.iter().find(|i| i.id == id)
 }
 
+fn provider_on(master: bool, provider: bool) -> bool {
+    master && provider
+}
+
 fn check_cursor(deps: &DoctorDeps) -> DoctorCheck {
     ai_check(
         "cursor",
         "Cursor",
-        deps.config.aitokens,
+        provider_on(deps.config.aitokens, deps.config.aitokens_cursor),
         item(&deps.scan, "cursor"),
         deps.files_ok,
     )
@@ -342,7 +340,7 @@ fn check_claude(deps: &DoctorDeps) -> DoctorCheck {
     ai_check(
         "claude",
         "Claude",
-        deps.config.aitokens,
+        provider_on(deps.config.aitokens, deps.config.aitokens_claude),
         item(&deps.scan, "claude"),
         deps.files_ok,
     )
@@ -352,7 +350,7 @@ fn check_codex(deps: &DoctorDeps) -> DoctorCheck {
     ai_check(
         "codex",
         "Codex / ChatGPT",
-        deps.config.aitokens,
+        provider_on(deps.config.aitokens, deps.config.aitokens_codex),
         item(&deps.scan, "codex"),
         deps.files_ok,
     )
@@ -456,9 +454,7 @@ fn probe_full_disk_access(roots: &ScanRoots) -> bool {
     let mode_db = roots
         .home
         .join("Library/DoNotDisturb/DB/ModeConfigurations.json");
-    let assertions = roots
-        .home
-        .join("Library/DoNotDisturb/DB/Assertions.json");
+    let assertions = roots.home.join("Library/DoNotDisturb/DB/Assertions.json");
     file_readable(&mode_db) || file_readable(&assertions)
 }
 
@@ -468,19 +464,21 @@ fn file_readable(path: &Path) -> bool {
 
 #[cfg(target_os = "macos")]
 fn probe_launch_agent() -> bool {
-    let uid = std::process::Command::new("id")
-        .arg("-u")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "501".into());
-    Command::new("launchctl")
-        .arg("print")
-        .arg(format!("gui/{uid}/com.tessera.agentd"))
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(true)
+    let uid = tessera_proc::command_output_timeout(
+        std::process::Command::new("id").arg("-u"),
+        std::time::Duration::from_secs(2),
+    )
+    .and_then(|o| String::from_utf8(o.stdout).ok())
+    .map(|s| s.trim().to_string())
+    .unwrap_or_else(|| "501".into());
+    tessera_proc::command_output_timeout(
+        Command::new("launchctl")
+            .arg("print")
+            .arg(format!("gui/{uid}/com.tessera.agentd")),
+        std::time::Duration::from_secs(2),
+    )
+    .map(|o| o.status.success())
+    .unwrap_or(true)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -501,12 +499,19 @@ fn probe_media(enabled: bool, scan: &ScanResult) -> (&'static str, String) {
     let mut cap = MediaCapability::with_default_watcher();
     let line = cap.build_line();
     if line.contains("\t0\t") {
-        return ("warn", "Watcher indisponível · reinstale ou autorize".into());
+        return (
+            "warn",
+            "Watcher indisponível · reinstale ou autorize".into(),
+        );
     }
     let parts: Vec<&str> = line.split('\t').collect();
     let state = parts.get(3).copied().unwrap_or("stopped");
     let app = parts.get(6).copied().unwrap_or("").trim();
-    let label = if app.is_empty() { "App de música" } else { app };
+    let label = if app.is_empty() {
+        "App de música"
+    } else {
+        app
+    };
     ("ok", format!("{label} detectado · agora: {state}"))
 }
 
@@ -550,31 +555,11 @@ mod tests {
             scan: ScanResult {
                 scanned_at: "0".into(),
                 found: vec![
-                    ScanItem {
-                        id: "cursor".into(),
-                        state: ScanState::Ready,
-                        enabled: true,
-                    },
-                    ScanItem {
-                        id: "claude".into(),
-                        state: ScanState::NeedsAuth,
-                        enabled: true,
-                    },
-                    ScanItem {
-                        id: "codex".into(),
-                        state: ScanState::Missing,
-                        enabled: false,
-                    },
-                    ScanItem {
-                        id: "media".into(),
-                        state: ScanState::Ready,
-                        enabled: true,
-                    },
-                    ScanItem {
-                        id: "focus".into(),
-                        state: ScanState::Ready,
-                        enabled: true,
-                    },
+                    ScanItem::new("cursor", ScanState::Ready, true),
+                    ScanItem::new("claude", ScanState::NeedsAuth, true),
+                    ScanItem::new("codex", ScanState::Missing, false),
+                    ScanItem::new("media", ScanState::Ready, true),
+                    ScanItem::new("focus", ScanState::Ready, true),
                 ],
             },
             media_level: "ok",
@@ -606,7 +591,10 @@ mod tests {
         let files = report.checks.iter().find(|c| c.id == "files").unwrap();
         assert_eq!(files.level, "bad");
         assert_eq!(files.settings_pane.as_deref(), Some("full_disk_access"));
-        assert!(files.settings_url.as_ref().is_some_and(|u| u.contains("Privacy_AllFiles")));
+        assert!(files
+            .settings_url
+            .as_ref()
+            .is_some_and(|u| u.contains("Privacy_AllFiles")));
     }
 
     #[test]
@@ -615,14 +603,44 @@ mod tests {
         let prep = prepare_permission("full_disk_access", dir.path()).unwrap();
         assert!(prep.ok);
         assert!(prep.settings_url.contains("Privacy_AllFiles"));
-        // No Tessera.app bundle in the temp home → bare binary path.
-        assert!(prep.binary_path.ends_with(".tessera/agentd/bin/Tessera"));
+        assert!(prep.binary_path.ends_with("Tessera Agent.app/Contents/MacOS/Tessera"));
+        assert!(prep.hint.contains("Tessera Agent"));
+    }
+
+    #[test]
+    fn prepare_full_disk_prefers_agent_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let macos = dir
+            .path()
+            .join(".tessera/agentd/Tessera Agent.app/Contents/MacOS");
+        std::fs::create_dir_all(&macos).unwrap();
+        std::fs::write(macos.join("Tessera"), b"bin").unwrap();
+        let prep = prepare_permission("full_disk_access", dir.path()).unwrap();
+        assert!(prep.binary_path.contains("Tessera Agent.app"));
     }
 
     #[test]
     fn push_warn_when_usb_down() {
         let report = run_doctor(&fake_deps(false, true, 0));
-        assert_eq!(report.checks.iter().find(|c| c.id == "push").unwrap().level, "warn");
+        assert_eq!(
+            report.checks.iter().find(|c| c.id == "push").unwrap().level,
+            "warn"
+        );
+    }
+
+    #[test]
+    fn claude_off_does_not_ask_to_sign_in() {
+        let mut deps = fake_deps(true, true, 0);
+        deps.config.aitokens_claude = false;
+        deps.config.aitokens_cursor = true;
+        deps.config.sync_aitokens_master();
+        let report = run_doctor(&deps);
+        let claude = report.checks.iter().find(|c| c.id == "claude").unwrap();
+        assert_eq!(claude.level, "skip");
+        assert!(claude.detail.contains("Desligado"));
+        assert!(claude.action.is_none());
+        let cursor = report.checks.iter().find(|c| c.id == "cursor").unwrap();
+        assert_eq!(cursor.level, "ok");
     }
 
     #[test]
