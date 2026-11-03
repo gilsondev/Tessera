@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/gilsondev/Tessera/compare/agent-v0.3.2...agent-v0.4.0) (2026-11-03)
+
+
+### Features
+
+* consolidate Tessera onboarding and smooth screensaver cadence ([8ee6b12](https://github.com/gilsondev/Tessera/commit/8ee6b12c33f1c19f73254e27c39fd01c9a4e522c))
+
 ## [0.3.2](https://github.com/gilsondev/Tessera/compare/agent-v0.3.1...agent-v0.3.2) (2026-10-28)
 
 
